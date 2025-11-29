@@ -5,7 +5,6 @@
 
 #include <atomic>
 #include "3dgs.h"
-
 #include "vulkan/Window.h"
 #include "GSScene.h"
 #include "vulkan/pipelines/ComputePipeline.h"
