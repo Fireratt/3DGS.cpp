@@ -153,8 +153,9 @@ std::shared_ptr<Buffer> GSScene::createBuffer(const std::shared_ptr<VulkanContex
         context, i, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
         VMA_MEMORY_USAGE_GPU_ONLY, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, false);
 }
-
+// 展平协方差矩阵
 void GSScene::precomputeCov3D(const std::shared_ptr<VulkanContext>&context) {
+    // 只有上三角与下三角，节约存储空间，为GPU只读的Buffer
     cov3DBuffer = createBuffer(context, header.numVertices * sizeof(float) * 6);
 
     auto pipeline = std::make_shared<ComputePipeline>(
