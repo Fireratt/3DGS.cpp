@@ -180,6 +180,7 @@ void Renderer::createPreprocessPipeline() {
     preprocessPipeline->addDescriptorSet(0, inputSet);
 
     auto uniformOutputSet = std::make_shared<DescriptorSet>(context, FRAMES_IN_FLIGHT);
+    // 虽然是outputSet， 实际上是输入参数，只不过绑定到1号set
     uniformOutputSet->bindBufferToDescriptorSet(0, vk::DescriptorType::eUniformBuffer,
                                                 vk::ShaderStageFlagBits::eCompute,
                                                 uniformBuffer);
@@ -210,11 +211,14 @@ void Renderer::createGui() {
     guiManager.init();
 }
 
+// 前缀和 ， Pingpong Buffer需要判定奇偶性 见recordPreprocessCommandBuffer 
 void Renderer::createPrefixSumPipeline() {
     spdlog::debug("Creating prefix sum pipeline");
     prefixSumPingBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(uint32_t), false);
     prefixSumPongBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(uint32_t), false);
     totalSumBufferHost = Buffer::staging(context, sizeof(uint32_t));
+    VkBuffer rawHandle = static_cast<VkBuffer>(totalSumBufferHost->buffer);
+    spdlog::info("[Firerat] totalSumBufferHost VirtualHandler: %p" , (void *)rawHandle) ; 
 
     prefixSumPipeline = std::make_shared<ComputePipeline>(
         context, std::make_shared<Shader>(context, "prefix_sum", SPV_PREFIX_SUM, SPV_PREFIX_SUM_len));
@@ -255,14 +259,17 @@ void Renderer::createRadixSortPipeline() {
         context, std::make_shared<Shader>(context, "sort", SPV_SORT, SPV_SORT_len));
 
     auto descriptorSet = std::make_shared<DescriptorSet>(context, FRAMES_IN_FLIGHT);
+    // 输入
     descriptorSet->bindBufferToDescriptorSet(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              sortKBufferEven);
     descriptorSet->bindBufferToDescriptorSet(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              sortKBufferOdd);
+    // 输出
     descriptorSet->bindBufferToDescriptorSet(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              sortHistBuffer);
     descriptorSet->build();
     sortHistPipeline->addDescriptorSet(0, descriptorSet);
+    // 控制参数
     sortHistPipeline->addPushConstant(vk::ShaderStageFlagBits::eCompute, 0, sizeof(RadixSortPushConstants));
     sortHistPipeline->build();
 
@@ -296,12 +303,14 @@ void Renderer::createPreprocessSortPipeline() {
     preprocessSortPipeline = std::make_shared<ComputePipeline>(
         context, std::make_shared<Shader>(context, "preprocess_sort", SPV_PREPROCESS_SORT, SPV_PREPROCESS_SORT_len));
     auto descriptorSet = std::make_shared<DescriptorSet>(context, FRAMES_IN_FLIGHT);
+    // 输入
     descriptorSet->bindBufferToDescriptorSet(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              vertexAttributeBuffer);
     descriptorSet->bindBufferToDescriptorSet(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              prefixSumPingBuffer);
     descriptorSet->bindBufferToDescriptorSet(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              prefixSumPongBuffer);
+    // 输出
     descriptorSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                              sortKBufferEven);
     descriptorSet->bindBufferToDescriptorSet(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
@@ -318,6 +327,7 @@ void Renderer::createTileBoundaryPipeline() {
     auto [width, height] = swapchain->swapchainExtent;
     auto tileX = (width + 16 - 1) / 16;
     auto tileY = (height + 16 - 1) / 16;
+    // 输出
     tileBoundaryBuffer = Buffer::storage(context, tileX * tileY * sizeof(uint32_t) * 2, false);
 
     tileBoundaryPipeline = std::make_shared<ComputePipeline>(
@@ -350,7 +360,7 @@ void Renderer::createRenderPipeline() {
     // inputSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
     //                                     sortKBufferOdd);
     inputSet->build();
-
+    // 输出到交换链
     auto outputSet = std::make_shared<DescriptorSet>(context, 1);
     for (auto& image: swapchain->swapchainImages) {
         outputSet->bindImageToDescriptorSet(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
@@ -384,7 +394,7 @@ startOfRenderLoop:
     handleInput();
 
     updateUniforms();
-
+    // 提交PreProcess
     auto submitInfo = vk::SubmitInfo{}.setCommandBuffers(preprocessCommandBuffer.get());
     context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
 
@@ -398,6 +408,7 @@ startOfRenderLoop:
         goto startOfRenderLoop;
     }
     vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eComputeShader;
+    // 提交渲染
     submitInfo = vk::SubmitInfo{}.setWaitSemaphores(swapchain->imageAvailableSemaphores[0].get())
             .setCommandBuffers(renderCommandBuffer.get())
             .setSignalSemaphores(renderFinishedSemaphores[0].get())
@@ -432,7 +443,10 @@ void Renderer::run() {
         }
 
         draw();
-
+        // @Firerat: 计算的直接去掉
+        if (!configuration.enableGui) {
+            continue ;
+        }
         auto now = std::chrono::high_resolution_clock::now();
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFpsTime).count();
         if (diff > 1000) {
@@ -464,7 +478,7 @@ void Renderer::createCommandPool() {
 
     commandPool = context->device->createCommandPoolUnique(poolInfo, nullptr);
 }
-
+// @火鼠：注意一下这个函数只录制一次指令，反复使用
 void Renderer::recordPreprocessCommandBuffer() {
     spdlog::debug("Recording preprocess command buffer");
     if (!preprocessCommandBuffer) {
@@ -479,7 +493,7 @@ void Renderer::recordPreprocessCommandBuffer() {
     preprocessCommandBuffer->begin(vk::CommandBufferBeginInfo{});
 
     preprocessCommandBuffer->resetQueryPool(context->queryPool.get(), 0, 12);
-
+    // Preprocess
     preprocessPipeline->bind(preprocessCommandBuffer, 0, 0);
     preprocessCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("preprocess_start"));
@@ -493,7 +507,7 @@ void Renderer::recordPreprocessCommandBuffer() {
 
     preprocessCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("preprocess_end"));
-
+    // Prefix
     prefixSumPipeline->bind(preprocessCommandBuffer, 0, 0);
     preprocessCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("prefix_sum_start"));
@@ -503,7 +517,7 @@ void Renderer::recordPreprocessCommandBuffer() {
                                                vk::ShaderStageFlagBits::eCompute, 0,
                                                sizeof(uint32_t), &timestep);
         preprocessCommandBuffer->dispatch(numGroups, 1, 1);
-
+        // 查找实际输出
         if (timestep % 2 == 0) {
             prefixSumPongBuffer->computeWriteReadBarrier(preprocessCommandBuffer.get());
             prefixSumPingBuffer->computeReadWriteBarrier(preprocessCommandBuffer.get());
@@ -514,6 +528,7 @@ void Renderer::recordPreprocessCommandBuffer() {
     }
 
     auto totalSumRegion = vk::BufferCopy{(scene->getNumVertices() - 1) * sizeof(uint32_t), 0, sizeof(uint32_t)};
+    // @火鼠 Note： 拷贝到了Host Buffer中， 应该就是这里导致无法正常渲染
     if (iters % 2 == 0) {
         preprocessCommandBuffer->copyBuffer(prefixSumPingBuffer->buffer, totalSumBufferHost->buffer, 1,
                                             &totalSumRegion);
@@ -528,18 +543,22 @@ void Renderer::recordPreprocessCommandBuffer() {
     preprocessCommandBuffer->end();
 }
 
-
+// 这个是每次都重新录制的，也与NumInstances每次都在变化保持一致。
 bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     if (!renderCommandBuffer) {
         renderCommandBuffer = std::move(context->device->allocateCommandBuffersUnique(
             vk::CommandBufferAllocateInfo(commandPool.get(), vk::CommandBufferLevel::ePrimary, 1))[0]);
     }
-
+    // 读取了totalSumBufferHost ， 很有可能从主存读取
     uint32_t numInstances = totalSumBufferHost->readOne<uint32_t>();
+    spdlog::info("[Firerat] Record RenderCommand as NumInstances:%u" , numInstances) ; 
     // spdlog::debug("Num instances: {}", numInstances);
-    guiManager.pushTextMetric("instances", numInstances);
+    // @火鼠: 关闭了GUI
+    // guiManager.pushTextMetric("instances", numInstances);
+    
     if (numInstances > scene->getNumVertices() * sortBufferSizeMultiplier) {
         auto old = sortBufferSizeMultiplier;
+        // 翻倍扩容PingpongBuffer ， 直到能够容纳。
         while (numInstances > scene->getNumVertices() * sortBufferSizeMultiplier) {
             sortBufferSizeMultiplier++;
         }
@@ -557,7 +576,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
         auto numWorkgroups = (globalInvocationSize + 256 - 1) / 256;
 
         sortHistBuffer->realloc(numWorkgroups * 256 * sizeof(uint32_t));
-
+        // 重新录制
         recordPreprocessCommandBuffer();
         return false;
     }
@@ -573,7 +592,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
 #endif
 
     vertexAttributeBuffer->computeWriteReadBarrier(renderCommandBuffer.get());
-
+    // preprocess Sort
     const auto iters = static_cast<uint32_t>(std::ceil(std::log2(static_cast<float>(scene->getNumVertices()))));
     auto numGroups = (scene->getNumVertices() + 255) / 256;
     preprocessSortPipeline->bind(renderCommandBuffer, 0, iters % 2 == 0 ? 0 : 1);
@@ -595,6 +614,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     assert(numInstances <= scene->getNumVertices() * sortBufferSizeMultiplier);
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                                 queryManager->registerQuery("sort_start"));
+    // sort hist
     for (auto i = 0; i < 8; i++) {
         sortHistPipeline->bind(renderCommandBuffer, 0, i % 2 == 0 ? 0 : 1);
         auto invocationSize = (numInstances + numRadixSortBlocksPerWorkgroup - 1) / numRadixSortBlocksPerWorkgroup;
@@ -637,8 +657,8 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
                               vk::AccessFlagBits::eShaderWrite)
             .build(renderCommandBuffer.get(), vk::PipelineStageFlagBits::eTransfer,
                    vk::PipelineStageFlagBits::eComputeShader);
-
-    // Since we have 64 bit keys, the sort result is always in the even buffer
+    // tile Boundary
+    // 基数排序pingpong切换次数是根据bit的数量的，而我们是 Since we have 64 bit keys, the sort result is always in the even buffer
     tileBoundaryPipeline->bind(renderCommandBuffer, 0, 0);
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("tile_boundary_start"));
@@ -715,7 +735,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
 
     return true;
 }
-
+// 修改为计算机视觉坐标系 将 Z-back → Z-forward，匹配 CV 相机
 void Renderer::updateUniforms() {
     UniformBuffer data{};
     auto [width, height] = swapchain->swapchainExtent;

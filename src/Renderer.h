@@ -26,7 +26,7 @@ public:
         float tan_fovx;
         float tan_fovy;
     };
-
+    // 每顶点光栅化属性
     struct VertexAttributeBuffer {
         glm::vec4 conic_opacity;
         glm::vec4 color_radii;

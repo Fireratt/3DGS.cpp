@@ -91,7 +91,7 @@ void Buffer::uploadFrom(std::shared_ptr<Buffer> buffer) {
     if (vmaUsage == VMA_MEMORY_USAGE_GPU_ONLY || vmaUsage == VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE) {
         auto commandBuffer = context->beginOneTimeCommandBuffer();
         vk::BufferCopy copyRegion = {};
-        copyRegion.setSize(buffer->size);
+        copyRegion.setSize(buffer->size);  
         commandBuffer->copyBuffer(buffer->buffer, this->buffer, 1, &copyRegion);
         context->endOneTimeCommandBuffer(std::move(commandBuffer), VulkanContext::Queue::COMPUTE);
     } else if (flags & VMA_ALLOCATION_CREATE_MAPPED_BIT) {
