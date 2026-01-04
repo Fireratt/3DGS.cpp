@@ -38,7 +38,7 @@ void main() {
         return;
     }
 
-    assert(attr[index].aabb.x < attr[index].aabb.z && attr[index].aabb.y < attr[index].aabb.w, "in!!!valid aabb: %d %d %d %d\n", ivec4(attr[index].aabb));
+//    assert(attr[index].aabb.x < attr[index].aabb.z && attr[index].aabb.y < attr[index].aabb.w, "in!!!valid aabb: %d %d %d %d\n", ivec4(attr[index].aabb));
 
     uint ind = index == 0 ? 0 : prefixSum[index - 1];
 

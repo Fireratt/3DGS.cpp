@@ -148,7 +148,7 @@ void Buffer::boundToDescriptorSet(std::weak_ptr<DescriptorSet> descriptorSet, ui
     vk::DescriptorType type) {
     boundDescriptorSets.push_back({descriptorSet, set, binding, type});
 }
-
+// 会map且频繁访问
 std::shared_ptr<Buffer> Buffer::uniform(std::shared_ptr<VulkanContext> context, uint32_t size, bool concurrentSharing) {
     return std::make_shared<Buffer>(std::move(context), size, vk::BufferUsageFlagBits::eUniformBuffer,
                                     VMA_MEMORY_USAGE_AUTO,
