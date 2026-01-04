@@ -7,7 +7,9 @@
 #include <spdlog/spdlog.h>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
-
+static const VkValidationFeatureEnableEXT g_enabledValidationFeatures[] = {
+    VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+};
 VkBool32 debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                        VkDebugUtilsMessageTypeFlagsEXT messageType,
                        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
@@ -73,9 +75,14 @@ void VulkanContext::createInstance() {
     if (validationLayersEnabled) {
         requiredLayers.push_back("VK_LAYER_KHRONOS_validation");
     }
-
+    // 新增：ValidationFeaturesEXT 配置
+    vk::ValidationFeaturesEXT validationFeatures{};
+    if (validationLayersEnabled) {
+        validationFeatures.enabledValidationFeatureCount = 1;
+        validationFeatures.pEnabledValidationFeatures = (const vk::ValidationFeatureEnableEXT *)g_enabledValidationFeatures;
+    }
     auto instanceExtensionsCharPtr = Utils::stringVectorToCharPtrVector(instanceExtensions);
-    vk::StructureChain<vk::InstanceCreateInfo, vk::DebugUtilsMessengerCreateInfoEXT> createInfoChain = {
+    vk::StructureChain<vk::InstanceCreateInfo, vk::DebugUtilsMessengerCreateInfoEXT ,  vk::ValidationFeaturesEXT> createInfoChain = {
         {
             {}, &appInfo, (uint32_t) requiredLayers.size(), requiredLayers.data(), (uint32_t) instanceExtensions.size(),
             instanceExtensionsCharPtr.data()
@@ -88,7 +95,8 @@ void VulkanContext::createInstance() {
             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
             debugCallback
-        }
+        },
+        validationFeatures  
     };
 
 #ifdef __APPLE__
@@ -97,6 +105,8 @@ void VulkanContext::createInstance() {
 
     if (!validationLayersEnabled) {
         createInfoChain.unlink<vk::DebugUtilsMessengerCreateInfoEXT>();
+        createInfoChain.unlink<vk::ValidationFeaturesEXT>();
+
     }
 
     instance = vk::createInstanceUnique(createInfoChain.get<vk::InstanceCreateInfo>());

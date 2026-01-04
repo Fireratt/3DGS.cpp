@@ -166,6 +166,9 @@ void Renderer::loadSceneToGPU() {
 void Renderer::createPreprocessPipeline() {
     spdlog::debug("Creating preprocess pipeline");
     uniformBuffer = Buffer::uniform(context, sizeof(UniformBuffer));
+    VkBuffer rawHandle = static_cast<VkBuffer>(uniformBuffer->buffer);
+    spdlog::info("[Firerat] camera uniformBuffer VirtualHandler: {}" , (void *)rawHandle) ; 
+
     vertexAttributeBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(VertexAttributeBuffer), false);
     tileOverlapBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(uint32_t), false);
 
@@ -218,7 +221,7 @@ void Renderer::createPrefixSumPipeline() {
     prefixSumPongBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(uint32_t), false);
     totalSumBufferHost = Buffer::staging(context, sizeof(uint32_t));
     VkBuffer rawHandle = static_cast<VkBuffer>(totalSumBufferHost->buffer);
-    spdlog::info("[Firerat] totalSumBufferHost VirtualHandler: %p" , (void *)rawHandle) ; 
+    spdlog::info("[Firerat] totalSumBufferHost VirtualHandler: {}" , (void *)rawHandle) ; 
 
     prefixSumPipeline = std::make_shared<ComputePipeline>(
         context, std::make_shared<Shader>(context, "prefix_sum", SPV_PREFIX_SUM, SPV_PREFIX_SUM_len));
@@ -374,6 +377,7 @@ void Renderer::createRenderPipeline() {
 }
 
 void Renderer::draw() {
+    // @火鼠:此处有可能需要回传某些数据
     auto ret = context->device->waitForFences(inflightFences[0].get(), VK_TRUE, UINT64_MAX);
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
@@ -397,7 +401,7 @@ startOfRenderLoop:
     // 提交PreProcess
     auto submitInfo = vk::SubmitInfo{}.setCommandBuffers(preprocessCommandBuffer.get());
     context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
-
+    // @火鼠：此处有可能需要Server同步Staging（totalSumBufferHost）。
     ret = context->device->waitForFences(inflightFences[0].get(), VK_TRUE, UINT64_MAX);
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
@@ -443,7 +447,7 @@ void Renderer::run() {
         }
 
         draw();
-        // @Firerat: 计算的直接去掉
+        // @火鼠: 计算的直接去掉
         if (!configuration.enableGui) {
             continue ;
         }
@@ -549,9 +553,9 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
         renderCommandBuffer = std::move(context->device->allocateCommandBuffersUnique(
             vk::CommandBufferAllocateInfo(commandPool.get(), vk::CommandBufferLevel::ePrimary, 1))[0]);
     }
-    // 读取了totalSumBufferHost ， 很有可能从主存读取
+    // 读取了totalSumBufferHost ， 很有可能从主存读取； 这个结果会依赖相机；
     uint32_t numInstances = totalSumBufferHost->readOne<uint32_t>();
-    spdlog::info("[Firerat] Record RenderCommand as NumInstances:%u" , numInstances) ; 
+    spdlog::info("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
     // spdlog::debug("Num instances: {}", numInstances);
     // @火鼠: 关闭了GUI
     // guiManager.pushTextMetric("instances", numInstances);
@@ -670,7 +674,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     tileBoundaryBuffer->computeWriteReadBarrier(renderCommandBuffer.get());
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("tile_boundary_end"));
-
+    // render
     renderPipeline->bind(renderCommandBuffer, 0, std::vector<uint32_t>{0, currentImageIndex});
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("render_start"));
@@ -770,6 +774,7 @@ void Renderer::updateUniforms() {
     data.proj_mat[3][1] *= -1.0f;
     data.tan_fovx = tan_fovx;
     data.tan_fovy = tan_fovy;
+    // @火鼠： 此处将uniform信息上传到GPU
     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
 }
 
