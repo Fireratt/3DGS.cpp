@@ -51,9 +51,4 @@ void main() {
         }
     }
 
-    #ifdef DEBUG
-    if (index == 0) {
-//        debugPrintfEXT("timestep: %d\n", timestep);
-    }
-    #endif
 }

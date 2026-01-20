@@ -19,7 +19,7 @@ public:
         float fov = 45.0f;
         float near = 0.2f;
         float far = 1000.0f;
-        bool enableGui = false;
+        bool enableGui = true;
 
         std::shared_ptr<Window> window;
     };

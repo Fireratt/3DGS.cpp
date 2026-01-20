@@ -154,6 +154,7 @@ std::shared_ptr<Buffer> GSScene::createBuffer(const std::shared_ptr<VulkanContex
         VMA_MEMORY_USAGE_GPU_ONLY, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, false);
 }
 // 展平协方差矩阵
+// @火鼠： 我们很有可能会在这里做相机划分，这样后面的我们都可以正常做。
 void GSScene::precomputeCov3D(const std::shared_ptr<VulkanContext>&context) {
     // 只有上三角与下三角，节约存储空间，为GPU只读的Buffer
     cov3DBuffer = createBuffer(context, header.numVertices * sizeof(float) * 6);
@@ -175,6 +176,7 @@ void GSScene::precomputeCov3D(const std::shared_ptr<VulkanContext>&context) {
     auto commandBuffer = context->beginOneTimeCommandBuffer();
     pipeline->bind(commandBuffer, 0, 0);
     float scaleFactor = 1.0f;
+    // 为precompute传递pushConstants
     commandBuffer->pushConstants(pipeline->pipelineLayout.get(), vk::ShaderStageFlagBits::eCompute, 0,
                                  sizeof(float), &scaleFactor);
     int numGroups = (header.numVertices + 255) / 256;

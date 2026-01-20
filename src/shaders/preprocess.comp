@@ -2,15 +2,16 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "./common.glsl"
 
-
+// 顶点属性
 layout (std430, set = 0, binding = 0) readonly buffer Vertices {
     Vertex vertices[];
 };
-
+// precomp计算的cov3ds
+// 规则的，为6个一组
 layout (std430, set = 0, binding = 1) readonly buffer Cov3Ds {
     float cov3ds[];
 };
-
+// 相机参数
 layout (std140, set = 1, binding = 0) uniform Params {
     vec4 camera_position;
     mat4 proj_mat;
@@ -32,6 +33,7 @@ layout (std430, set = 1, binding = 2) writeonly buffer NumTilesOverlap {
 layout (local_size_x = TILE_WIDTH * TILE_HEIGHT, local_size_y = 1, local_size_z = 1) in;
 
 mat3 get_projection_jacobian_approx(vec3 t) {
+    // 软裁剪 计算原始归一化坐标 即使原始点在视野外或非常近，我们也“假装”它在一个合理位置，并用这个修正后的 t 来计算雅可比
     float limx = 1.3 * tan_fovx;
     float limy = 1.3 * tan_fovy;
     float txtz = t.x / t.z;
@@ -41,7 +43,7 @@ mat3 get_projection_jacobian_approx(vec3 t) {
 
     float focal_x = width / (2 * tan_fovx);
     float focal_y = height / (2 * tan_fovy);
-
+    // 直接使用了微分雅可比矩阵的理论值
     return mat3(
         focal_x / t.z, 0, -(focal_x * t.x) / (t.z * t.z),
         0, focal_y / t.z, -(focal_y * t.y) / (t.z * t.z),
@@ -50,16 +52,24 @@ mat3 get_projection_jacobian_approx(vec3 t) {
 }
 
 mat2 compute_cov2d(vec3 cam) {
+    // 获取当前处理的元素索引
     uint index = gl_GlobalInvocationID.x;
+    // 获取投影雅可比矩阵， cam 为相机位置
     mat3 J = get_projection_jacobian_approx(cam);
+    // 获取视图矩阵的转置，这样可以在后续转换中适应从世界空间到相机空间的变换
     mat3 W = transpose(mat3(view_mat));
+     // 使用协方差数组创建一个 3x3 协方差矩阵 Sigma，索引根据传入的 `index` 选择
     mat3 Sigma = mat3(
         cov3ds[index * 6], cov3ds[index * 6 + 1], cov3ds[index * 6 + 2],
         cov3ds[index * 6 + 1], cov3ds[index * 6 + 3], cov3ds[index * 6 + 4],
         cov3ds[index * 6 + 2], cov3ds[index * 6 + 4], cov3ds[index * 6 + 5]
     );
+    // 计算视图变换矩阵 W 和投影雅可比矩阵 J 的乘积 T，这将把 3D 空间的协方差映射到相机视图空间
+    // 投影矩阵本身在投影时会过滤掉那些在相机视锥外的物体，即 视锥剔除 是通过 J 计算的。
     mat3 T = W * J;
+    // 通过 T 和 Sigma 计算投影后的 2D 协方差矩阵，变换过程包括将 3D 协方差矩阵压缩成 2D
     mat3 cov2d = transpose(T) * Sigma * T;
+    // 为了增加噪声，防止协方差矩阵奇异（零矩阵），增加对角线的常数偏移
     cov2d[0][0] += 0.3f;
     cov2d[1][1] += 0.3f;
     return mat2(cov2d);
@@ -117,46 +127,56 @@ void main() {
     if (index >= vertices.length()) {
         return;
     }
-    if (index == 0) {
-//        debugPrintfEXT("width: %d, height: %d, tan_fovx: %f, tan_fovy: %f\n", width, height, tan_fovx, tan_fovy);
-    }
-
+    #ifdef DEBUG
+        if (index == 0) {
+            debugPrintfEXT("width: %d, height: %d, tan_fovx: %f, tan_fovy: %f\n", width, height, tan_fovx, tan_fovy);
+        }
+    #endif
+    // 计算tile在XY上的数量 ， Index是顶点下标
     ivec2 tile_shape = ivec2((width + TILE_WIDTH - 1) / TILE_WIDTH, (height + TILE_HEIGHT - 1) / TILE_HEIGHT);
 //    assert(tile_shape.x == 50 && tile_shape.y == 38, "invalid tile shape: %d %d\n", tile_shape);
-
+    // 初始化顶点Radius
     attr[index].color_radii.w = 0.0;
     tiles_overlap[index] = 0;
-
+    // 此处proj_mat为 P*V ，转到裁剪坐标
     vec4 p_hom = proj_mat * vertices[index].position;
     float p_w = 1.0f / p_hom.w;
+    // 归一化到NDC（/w即可）
     vec3 ndc = vec3(p_hom.xyz * p_w);
-
+    // 转到相机坐标
     vec4 p_view = view_mat * vertices[index].position;
     if (p_view.z <= 0.2f) {
         return;
     }
-
+    // 计算conv2D，conv2D理论上必须满足对称且正定
     mat2 cov2d = compute_cov2d(p_view.xyz);
     float det = determinant(cov2d);
+    // 行列式为负说明非正定，两种情况可能导致非正定：高斯在相机后方，或误差问题。但总之conv2D必须满足正定，否则高斯非法 不该渲染，所以可以直接return不渲染
     if (det <= 0.0) {
         return;
     }
+    // 求逆
     mat2 conic = inverse(cov2d);
+    // 存储conv2D的逆矩阵 ， conic矩阵是对称的2D矩阵，所以只需要三个分量
     attr[index].conic_opacity.xyz = vec3(conic[0][0], conic[0][1], conic[1][1]);
+    // 顺便用这里存储opacity
     attr[index].conic_opacity.w = vertices[index].scale_opacity.w;
-
+    // 估算屏幕半径 用于TILE分配
     float mid = 0.5 * (cov2d[0][0] + cov2d[1][1]);
+    // 利用行列式算出特征值
     float lambda1 = mid + sqrt(max(0.1, mid * mid - det));
     float lambda2 = mid - sqrt(max(0.1, mid * mid - det));
     float lambda = max(lambda1, lambda2);
+    // 我们用圆形包围盒来代表一个椭圆高斯。
     float radii = ceil(3.0 * sqrt(lambda));
 //    if (radii > 2.0) {
 //        debugPrintfEXT("lambda: %f, radii: %f\n", lambda, radii);
 //    }
 
 //    vec2 uv = vec2((ndc.x + 1.0) * 0.5 * width, (ndc.y + 1.0) * 0.5 * height);
+    // 转到像素坐标系（因为Tile用像素坐标系展开）
     vec2 uv = vec2(ndc2Pix(ndc.x, int(width)), ndc2Pix(ndc.y, int(height)));
-
+    // 计算圆的碰撞箱（转到AABB了）
     uvec4 bounding_box = uvec4(
             uint(clamp(int((uv.x - radii) / TILE_WIDTH), 0, tile_shape.x)),
             uint(clamp(int((uv.y - radii) / TILE_HEIGHT), 0, tile_shape.y)),

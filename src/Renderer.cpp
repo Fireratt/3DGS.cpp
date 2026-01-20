@@ -39,8 +39,8 @@ void Renderer::handleInput() {
         window->mouseCapture(true);
         guiManager.mouseCapture = true;
     }
-
     // rotate camera
+    // @火鼠：在没有焦点时 不允许旋转camera ， 不然无法确定地渲染场景
     if (!configuration.enableGui || guiManager.mouseCapture) {
         if (translation[0] != 0.0 || translation[1] != 0.0) {
             camera.rotation = glm::rotate(camera.rotation, static_cast<float>(translation[0]) * 0.005f,
@@ -54,22 +54,22 @@ void Renderer::handleInput() {
     if (!configuration.enableGui || !guiManager.wantCaptureKeyboard()) {
         glm::vec3 direction = glm::vec3(0.0f, 0.0f, 0.0f);
         if (keys[0]) {
-            direction += glm::vec3(0.0f, 0.0f, -1.0f);
+            direction += glm::vec3(0.0f, 0.0f, +1.0f);
         }
         if (keys[1]) {
-            direction += glm::vec3(-1.0f, 0.0f, 0.0f);
+            direction += glm::vec3(+1.0f, 0.0f, 0.0f);
         }
         if (keys[2]) {
-            direction += glm::vec3(0.0f, 0.0f, 1.0f);
+            direction += glm::vec3(0.0f, 0.0f, -1.0f);
         }
         if (keys[3]) {
-            direction += glm::vec3(1.0f, 0.0f, 0.0f);
+            direction += glm::vec3(-1.0f, 0.0f, 0.0f);
         }
         if (keys[4]) {
-            direction += glm::vec3(0.0f, 1.0f, 0.0f);
+            direction += glm::vec3(0.0f, -1.0f, 0.0f);
         }
         if (keys[5]) {
-            direction += glm::vec3(0.0f, -1.0f, 0.0f);
+            direction += glm::vec3(0.0f, +1.0f, 0.0f);
         }
         if (keys[6]) {
             window->mouseCapture(false);
@@ -167,7 +167,7 @@ void Renderer::createPreprocessPipeline() {
     spdlog::debug("Creating preprocess pipeline");
     uniformBuffer = Buffer::uniform(context, sizeof(UniformBuffer));
     VkBuffer rawHandle = static_cast<VkBuffer>(uniformBuffer->buffer);
-    spdlog::info("[Firerat] camera uniformBuffer VirtualHandler: {}" , (void *)rawHandle) ; 
+    spdlog::debug("[Firerat] camera uniformBuffer VirtualHandler: {}" , (void *)rawHandle) ; 
 
     vertexAttributeBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(VertexAttributeBuffer), false);
     tileOverlapBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(uint32_t), false);
@@ -193,7 +193,7 @@ void Renderer::createPreprocessPipeline() {
     uniformOutputSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer,
                                                 vk::ShaderStageFlagBits::eCompute,
                                                 tileOverlapBuffer);
-    uniformOutputSet->build();
+    uniformOutputSet->build(); 
 
     preprocessPipeline->addDescriptorSet(1, uniformOutputSet);
     preprocessPipeline->build();
@@ -221,7 +221,7 @@ void Renderer::createPrefixSumPipeline() {
     prefixSumPongBuffer = Buffer::storage(context, scene->getNumVertices() * sizeof(uint32_t), false);
     totalSumBufferHost = Buffer::staging(context, sizeof(uint32_t));
     VkBuffer rawHandle = static_cast<VkBuffer>(totalSumBufferHost->buffer);
-    spdlog::info("[Firerat] totalSumBufferHost VirtualHandler: {}" , (void *)rawHandle) ; 
+    spdlog::debug("[Firerat] totalSumBufferHost VirtualHandler: {}" , (void *)rawHandle) ; 
 
     prefixSumPipeline = std::make_shared<ComputePipeline>(
         context, std::make_shared<Shader>(context, "prefix_sum", SPV_PREFIX_SUM, SPV_PREFIX_SUM_len));
@@ -378,6 +378,7 @@ void Renderer::createRenderPipeline() {
 
 void Renderer::draw() {
     // @火鼠:此处有可能需要回传某些数据
+    // @TODO:这里似乎没有被加入到我们的PROFILING，导致测的有点不准
     auto ret = context->device->waitForFences(inflightFences[0].get(), VK_TRUE, UINT64_MAX);
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
@@ -447,18 +448,19 @@ void Renderer::run() {
         }
 
         draw();
-        // @火鼠: 计算的直接去掉
-        if (!configuration.enableGui) {
-            continue ;
-        }
+        // 卡一下帧率
         auto now = std::chrono::high_resolution_clock::now();
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFpsTime).count();
         if (diff > 1000) {
-            spdlog::debug("FPS: {}", fpsCounter);
+            spdlog::info("FPS: {}", fpsCounter);
             fpsCounter = 0;
             lastFpsTime = now;
         } else {
             fpsCounter++;
+        }
+        // @火鼠: 计算的直接去掉
+        if (!configuration.enableGui) {
+            continue ;
         }
 
         retrieveTimestamps();
@@ -491,7 +493,7 @@ void Renderer::recordPreprocessCommandBuffer() {
         preprocessCommandBuffer = std::move(buffers[0]);
     }
     preprocessCommandBuffer->reset();
-
+    // 整个场景的总和
     auto numGroups = (scene->getNumVertices() + 255) / 256;
 
     preprocessCommandBuffer->begin(vk::CommandBufferBeginInfo{});
@@ -501,6 +503,7 @@ void Renderer::recordPreprocessCommandBuffer() {
     preprocessPipeline->bind(preprocessCommandBuffer, 0, 0);
     preprocessCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("preprocess_start"));
+    // 可以拦截dispatch 不让他调用这么多次？
     preprocessCommandBuffer->dispatch(numGroups, 1, 1);
     tileOverlapBuffer->computeWriteReadBarrier(preprocessCommandBuffer.get());
 
@@ -555,7 +558,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     }
     // 读取了totalSumBufferHost ， 很有可能从主存读取； 这个结果会依赖相机；
     uint32_t numInstances = totalSumBufferHost->readOne<uint32_t>();
-    spdlog::info("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
+    spdlog::debug("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
     // spdlog::debug("Num instances: {}", numInstances);
     // @火鼠: 关闭了GUI
     // guiManager.pushTextMetric("instances", numInstances);
@@ -632,9 +635,9 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
         renderCommandBuffer->pushConstants(sortHistPipeline->pipelineLayout.get(),
                                            vk::ShaderStageFlagBits::eCompute, 0,
                                            sizeof(RadixSortPushConstants), &pushConstants);
-
+        spdlog::debug("[Firerat] pushConstants:{} {} {} {}" , numInstances , numRadixSortBlocksPerWorkgroup , i * 8 , invocationSize) ;
         renderCommandBuffer->dispatch(invocationSize, 1, 1);
-
+        // 定位到此处可能是卡死的一个原因。
         sortHistBuffer->computeWriteReadBarrier(renderCommandBuffer.get());
 
         sortPipeline->bind(renderCommandBuffer, 0, i % 2 == 0 ? 0 : 1);
@@ -674,6 +677,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     tileBoundaryBuffer->computeWriteReadBarrier(renderCommandBuffer.get());
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("tile_boundary_end"));
+
     // render
     renderPipeline->bind(renderCommandBuffer, 0, std::vector<uint32_t>{0, currentImageIndex});
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
@@ -743,38 +747,29 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
 void Renderer::updateUniforms() {
     UniformBuffer data{};
     auto [width, height] = swapchain->swapchainExtent;
-    data.width = width;
+
+    data.width  = width;
     data.height = height;
     data.camera_position = glm::vec4(camera.position, 1.0f);
 
-    auto rotation = glm::mat4_cast(camera.rotation);
-    auto translation = glm::translate(glm::mat4(1.0f), camera.position);
-    auto view = glm::inverse(translation * rotation);
+    glm::mat4 rotation    = glm::mat4_cast(camera.rotation);
+    glm::mat4 translation = glm::translate(glm::mat4(1.0f), camera.position);
+    data.view_mat = glm::inverse(translation * rotation);
 
-    float tan_fovx = std::tan(glm::radians(camera.fov) / 2.0);
-    float tan_fovy = tan_fovx * static_cast<float>(height) / static_cast<float>(width);
-    data.view_mat = view;
-    data.proj_mat = glm::perspective(std::atan(tan_fovy) * 2.0f,
-                                     static_cast<float>(width) / static_cast<float>(height),
-                                     camera.nearPlane,
-                                     camera.farPlane) * view;
-
-    data.view_mat[0][1] *= -1.0f;
-    data.view_mat[1][1] *= -1.0f;
-    data.view_mat[2][1] *= -1.0f;
-    data.view_mat[3][1] *= -1.0f;
-    data.view_mat[0][2] *= -1.0f;
-    data.view_mat[1][2] *= -1.0f;
-    data.view_mat[2][2] *= -1.0f;
-    data.view_mat[3][2] *= -1.0f;
-
-    data.proj_mat[0][1] *= -1.0f;
+    float aspect = float(width) / float(height);
+    data.proj_mat = glm::perspective(
+        glm::radians(camera.fov),
+        aspect,
+        camera.nearPlane,
+        camera.farPlane
+    ) ;
+    // Vulkan Y-flip
     data.proj_mat[1][1] *= -1.0f;
-    data.proj_mat[2][1] *= -1.0f;
-    data.proj_mat[3][1] *= -1.0f;
-    data.tan_fovx = tan_fovx;
-    data.tan_fovy = tan_fovy;
-    // @火鼠： 此处将uniform信息上传到GPU
+    data.proj_mat = data.proj_mat * data.view_mat ;
+
+    data.tan_fovx = std::tan(glm::radians(camera.fov) * 0.5f);
+    data.tan_fovy = data.tan_fovx / aspect;
+
     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
 }
 

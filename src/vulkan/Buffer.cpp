@@ -156,11 +156,19 @@ std::shared_ptr<Buffer> Buffer::uniform(std::shared_ptr<VulkanContext> context, 
                                     concurrentSharing);
 }
 
+// std::shared_ptr<Buffer> Buffer::staging(std::shared_ptr<VulkanContext> context, unsigned long size) {
+//     return std::make_shared<Buffer>(context, size,
+//                                     vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
+//                                     VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT |
+//                                                            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+//                                     false);
+// }
+// firerat版本的staging buffer，改了一个更好用于服务器读取的bit
 std::shared_ptr<Buffer> Buffer::staging(std::shared_ptr<VulkanContext> context, unsigned long size) {
     return std::make_shared<Buffer>(context, size,
                                     vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
                                     VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                                                           VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                                                           VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
                                     false);
 }
 
