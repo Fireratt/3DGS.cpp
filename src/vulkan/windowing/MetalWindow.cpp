@@ -44,3 +44,7 @@ void MetalWindow::logTranslation(float x, float y) {
     accumulatedX += x;
     accumulatedY += y;
 }
+bool MetalWindow::isFocused() {
+    // @TODO: Currently we are glfwwindow . i dont know how to fix MetalWindow
+    return true ; 
+}

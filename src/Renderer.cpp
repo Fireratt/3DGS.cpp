@@ -41,12 +41,24 @@ void Renderer::handleInput() {
     }
     // rotate camera
     // @火鼠：在没有焦点时 不允许旋转camera ， 不然无法确定地渲染场景
-    if (!configuration.enableGui || guiManager.mouseCapture) {
+    if ((!configuration.enableGui || guiManager.mouseCapture) && window->isFocused() ) {
         if (translation[0] != 0.0 || translation[1] != 0.0) {
-            camera.rotation = glm::rotate(camera.rotation, static_cast<float>(translation[0]) * 0.005f,
-                                          glm::vec3(0.0f, -1.0f, 0.0f));
-            camera.rotation = glm::rotate(camera.rotation, static_cast<float>(translation[1]) * 0.005f,
-                                          glm::vec3(-1.0f, 0.0f, 0.0f));
+            // 从当前 rotation 中取出相机局部轴
+            glm::vec3 camRight = camera.rotation * glm::vec3(1, 0, 0);
+            glm::vec3 camUp    = camera.rotation * glm::vec3(0, 1, 0);
+            // 
+            float yaw   = translation[0] * 0.005f;
+            float pitch = translation[1] * 0.005f;
+
+            // yaw：绕相机的“当前 up”
+            camera.rotation = glm::normalize(
+                glm::angleAxis(-yaw, camUp) * camera.rotation
+            );
+
+            // pitch：绕相机的“当前 right”
+            camera.rotation = glm::normalize(
+                glm::angleAxis(-pitch, camRight) * camera.rotation
+            );
         }
     }
 
