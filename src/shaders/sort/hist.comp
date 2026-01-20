@@ -34,6 +34,9 @@
 #version 460
 #extension GL_GOOGLE_include_directive: enable
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+#ifdef DEBUG
+#extension GL_EXT_debug_printf : enable
+#endif
 
 #define WORKGROUP_SIZE 256 // assert WORKGROUP_SIZE >= RADIX_SORT_BINS
 #define RADIX_SORT_BINS 256U
@@ -68,6 +71,13 @@ shared uint[RADIX_SORT_BINS] histogram;
 
 void main() {
     uint gID = gl_GlobalInvocationID.x;
+    #ifdef DEBUG
+        if (gID == 0) {
+            debugPrintfEXT("Firerat DEBUG Hist") ;
+            debugPrintfEXT("PushConstants: %u %u %u %u ,elements_in[0]:%lu\n", g_num_elements, g_shift, g_num_workgroups, g_num_blocks_per_workgroup , g_elements_in[0]);
+        }
+    #endif
+
     uint lID = gl_LocalInvocationID.x;
     uint wID = gl_WorkGroupID.x;
 

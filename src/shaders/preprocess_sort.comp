@@ -4,6 +4,9 @@
 
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
 //#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+#ifdef DEBUG
+#extension GL_EXT_debug_printf : enable
+#endif
 
 layout (std430, set = 0, binding = 0) readonly buffer Vertices {
     VertexAttribute attr[];
@@ -30,6 +33,12 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
+    #ifdef DEBUG
+        if(index == 0){
+            debugPrintfEXT("PreProcess Sort : tileX :%u , prefixSum[0]:%u \n", tileX , prefixSum[0]);
+        }
+    #endif
+
     if (index >= prefixSum.length()) {
         return;
     }

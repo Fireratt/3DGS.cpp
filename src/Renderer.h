@@ -76,11 +76,14 @@ public:
     ~Renderer();
 
     Camera camera {
-        .position = glm::vec3(0.0f, 0.0f, 0.0f),
-        .rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-        .fov = 45.0f,
+        .position = glm::vec3(0.0f, 2.0f, -2.5f),
+        .rotation = glm::quatLookAt(
+            glm::normalize(glm::vec3(0.0f, 0.0f, -1.0f)), // 看向原点
+            glm::vec3(0.0f, +1.0f,  0.0f)
+        ),
+       .fov = 45.0f,
         .nearPlane = 0.1f,
-        .farPlane = 1000.0f
+        .farPlane = 45.0f
     };
 
 private:
