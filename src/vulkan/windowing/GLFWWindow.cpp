@@ -77,3 +77,7 @@ bool GLFWWindow::tick() {
     glfwPollEvents();
     return !glfwWindowShouldClose(static_cast<GLFWwindow *>(window));
 }
+
+bool GLFWWindow::isFocused() {
+    return glfwGetWindowAttrib(static_cast<GLFWwindow *>(window), GLFW_FOCUSED) ;
+}

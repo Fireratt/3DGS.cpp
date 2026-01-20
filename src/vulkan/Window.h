@@ -31,6 +31,8 @@ public:
 
     virtual ~Window() = default;
 
+    virtual bool isFocused() = 0 ;  
+
 };
 
 

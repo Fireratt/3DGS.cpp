@@ -25,6 +25,7 @@ public:
 
     void* window;
 
+    bool isFocused() override ; 
 private:
     VkSurfaceKHR surface = VK_NULL_HANDLE;
 

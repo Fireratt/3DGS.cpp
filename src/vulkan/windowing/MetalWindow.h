@@ -24,6 +24,8 @@ public:
     void logTranslation(float x, float y) override;
 
     bool tick() override;
+
+    bool isFocused() override ; 
 private:
     void *caMetalLayer;
     int width = 0;
