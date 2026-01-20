@@ -33,7 +33,6 @@ void Renderer::initialize() {
 void Renderer::handleInput() {
     auto translation = window->getCursorTranslation();
     auto keys = window->getKeys(); // W, A, S, D
-
     if ((!configuration.enableGui || (!guiManager.wantCaptureMouse() && !guiManager.mouseCapture)) && window->
         getMouseButton()[0]) {
         window->mouseCapture(true);
@@ -41,7 +40,7 @@ void Renderer::handleInput() {
     }
     // rotate camera
     // @火鼠：在没有焦点时 不允许旋转camera ， 不然无法确定地渲染场景
-    if ((!configuration.enableGui || guiManager.mouseCapture) && window->isFocused() ) {
+    if ((guiManager.mouseCapture) && window->isFocused() ) {
         if (translation[0] != 0.0 || translation[1] != 0.0) {
             // 从当前 rotation 中取出相机局部轴
             glm::vec3 camRight = camera.rotation * glm::vec3(1, 0, 0);
