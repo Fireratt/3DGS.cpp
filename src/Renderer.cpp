@@ -468,6 +468,7 @@ void Renderer::run() {
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFpsTime).count();
         if (diff > 1000) {
             spdlog::info("FPS: {}", fpsCounter);
+            spdlog::info("[Profiling] FPS in 1 second: {}" , fpsCounter) ;
             fpsCounter = 0;
             lastFpsTime = now;
         } else {
@@ -574,6 +575,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
             vk::CommandBufferAllocateInfo(commandPool.get(), vk::CommandBufferLevel::ePrimary, 1))[0]);
     }
     // 读取了totalSumBufferHost ， 很有可能从主存读取； 这个结果会依赖相机；
+    // 这里应该是开销集中的地方。
     uint32_t numInstances = totalSumBufferHost->readOne<uint32_t>();
     spdlog::debug("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
     // spdlog::debug("Num instances: {}", numInstances);
@@ -653,7 +655,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
         renderCommandBuffer->pushConstants(sortHistPipeline->pipelineLayout.get(),
                                            vk::ShaderStageFlagBits::eCompute, 0,
                                            sizeof(RadixSortPushConstants), &pushConstants);
-        spdlog::debug("[Firerat] pushConstants:{} {} {} {}" , numInstances , numRadixSortBlocksPerWorkgroup , i * 8 , invocationSize) ;
+        // spdlog::debug("[Firerat] pushConstants:{} {} {} {}" , numInstances , numRadixSortBlocksPerWorkgroup , i * 8 , invocationSize) ;
         renderCommandBuffer->dispatch(invocationSize, 1, 1);
         // 定位到此处可能是卡死的一个原因。
         sortHistBuffer->computeWriteReadBarrier(renderCommandBuffer.get());
