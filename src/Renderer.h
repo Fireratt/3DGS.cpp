@@ -74,16 +74,17 @@ public:
     void stop();
 
     ~Renderer();
-
+    // 我们需要从数据集自动计算高斯中心位置，将相机移动过去
+    void resetCameraFromScene() ;   
     Camera camera {
-        .position = glm::vec3(0.0f, 2.0f, -2.5f),
+        .position = glm::vec3(0.0f, -1.0f, -2.5f),
         .rotation = glm::quatLookAt(
             glm::normalize(glm::vec3(0.0f, 0.0f, -1.0f)), // 看向原点
             glm::vec3(0.0f, +1.0f,  0.0f)
         ),
        .fov = 45.0f,
         .nearPlane = 0.1f,
-        .farPlane = 45.0f
+        .farPlane = 100.0f
     };
 
 private:

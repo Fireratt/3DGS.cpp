@@ -5,11 +5,11 @@
 #ifdef DEBUG
 #extension GL_EXT_debug_printf : enable
 #endif
-
+// ping buffer
 layout (std430, set = 0, binding = 0) buffer In {
     uint src[];
 };
-
+// pong buffer
 layout (std430, set = 0, binding = 1) buffer Out {
     uint dst[];
 };
@@ -28,7 +28,7 @@ uint power(uint base, uint exponent) {
     }
     return result;
 }
-
+// 该着色器输入的是tile_overlap，输出的是tile_overlap的前缀和数组，几何意义是每个高斯所占用的tile的起始索引，后面被用到preprocess_sort中进行展开。
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= src.length()) {
