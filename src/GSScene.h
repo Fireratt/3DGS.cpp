@@ -23,7 +23,9 @@ struct PlyHeader {
 class GSScene {
 public:
     explicit GSScene(const std::string& filename)
-        : filename(filename) {
+        : filename(filename) , minP(FLT_MAX) ,maxP(-FLT_MAX)
+    {
+            
         // check if file exists
         if (!std::filesystem::exists(filename)) {
             throw std::runtime_error("File does not exist: " + filename);
@@ -51,6 +53,9 @@ public:
 
     std::shared_ptr<Buffer> vertexBuffer;
     std::shared_ptr<Buffer> cov3DBuffer;
+    glm::vec3 minP ; 
+    glm::vec3 maxP ;
+    float radius = 0 ; 
 private:
     std::string filename;
     PlyHeader header;

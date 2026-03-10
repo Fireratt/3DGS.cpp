@@ -32,6 +32,8 @@ void GSScene::load(const std::shared_ptr<VulkanContext>&context) {
     vertexBuffer = createBuffer(context, header.numVertices * sizeof(Vertex));
     auto vertexStagingBuffer = Buffer::staging(context, header.numVertices * sizeof(Vertex));
     auto* verteces = static_cast<Vertex *>(vertexStagingBuffer->allocation_info.pMappedData);
+    std::vector<float> distances;
+    distances.reserve(header.numVertices);
 
     for (auto i = 0; i < header.numVertices; i++) {
         static_assert(sizeof(VertexStorage) == 62 * sizeof(float));
@@ -56,7 +58,19 @@ void GSScene::load(const std::shared_ptr<VulkanContext>&context) {
         assert(vertexStorage.normal.x == 0.0f);
         assert(vertexStorage.normal.y == 0.0f);
         assert(vertexStorage.normal.z == 0.0f);
+        // 记录场景中高斯的坐标
+        glm::vec3 p = vertexStorage.position;
+        minP = glm::min(minP, p);
+        maxP = glm::max(maxP, p);
     }
+    glm::vec3 center = (minP + maxP) * 0.5f;
+    // 计算整个场景的半径
+    for (auto i = 0; i < header.numVertices; i++) {
+        glm::vec3 p = verteces[i].position;
+        distances.push_back(glm::length(p - center));
+    }
+    std::sort(distances.begin(), distances.end());
+    radius = distances[(size_t)((float)distances.size() * 0.9f)];
 
     vertexBuffer->uploadFrom(vertexStagingBuffer);
 
@@ -180,6 +194,7 @@ void GSScene::precomputeCov3D(const std::shared_ptr<VulkanContext>&context) {
     commandBuffer->pushConstants(pipeline->pipelineLayout.get(), vk::ShaderStageFlagBits::eCompute, 0,
                                  sizeof(float), &scaleFactor);
     int numGroups = (header.numVertices + 255) / 256;
+    // @Hint:这里就是我们需要调用的dispatch的参数数量！
     commandBuffer->dispatch(numGroups, 1, 1);
     context->endOneTimeCommandBuffer(std::move(commandBuffer), VulkanContext::Queue::COMPUTE);
 

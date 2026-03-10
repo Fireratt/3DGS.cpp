@@ -28,6 +28,8 @@ void Renderer::initialize() {
     createRenderPipeline();
     createCommandPool();
     recordPreprocessCommandBuffer();
+    // 从数据集计算高斯中心
+    // resetCameraFromScene() ; 
 }
 
 void Renderer::handleInput() {
@@ -106,6 +108,7 @@ void Renderer::retrieveTimestamps() {
     auto metrics = queryManager->parseResults(timestamps);
     for (auto& metric: metrics) {
         if (configuration.enableGui)
+            spdlog::info("{} : {}ms" , metric.first , metric.second / 1000000.0) ; 
             guiManager.pushMetric(metric.first, metric.second / 1000000.0);
     }
 }
@@ -201,12 +204,13 @@ void Renderer::createPreprocessPipeline() {
     uniformOutputSet->bindBufferToDescriptorSet(1, vk::DescriptorType::eStorageBuffer,
                                                 vk::ShaderStageFlagBits::eCompute,
                                                 vertexAttributeBuffer);
+    // tileOverlapBuffer会作为后续prefixSum的输入
     uniformOutputSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer,
                                                 vk::ShaderStageFlagBits::eCompute,
                                                 tileOverlapBuffer);
     uniformOutputSet->build(); 
-
     preprocessPipeline->addDescriptorSet(1, uniformOutputSet);
+    // 存在UpdateDescriptorSet 这里的InputSet已经被Server记录了
     preprocessPipeline->build();
 }
 
@@ -530,6 +534,7 @@ void Renderer::recordPreprocessCommandBuffer() {
     preprocessCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("prefix_sum_start"));
     const auto iters = static_cast<uint32_t>(std::ceil(std::log2(static_cast<float>(scene->getNumVertices()))));
+    // 分组 多次Dispatch； PrefixSum需要阶段性全局同步，但是GPU是不支持工作组同步的，只能多次Dispatch
     for (uint32_t timestep = 0; timestep <= iters; timestep++) {
         preprocessCommandBuffer->pushConstants(prefixSumPipeline->pipelineLayout.get(),
                                                vk::ShaderStageFlagBits::eCompute, 0,
@@ -544,7 +549,8 @@ void Renderer::recordPreprocessCommandBuffer() {
             prefixSumPongBuffer->computeReadWriteBarrier(preprocessCommandBuffer.get());
         }
     }
-
+    // @TODO: 这个totalSum是多卡最难处理的地方，我们不知道该传哪个回来，需要看一下是用来干嘛的
+    // 只选取了前缀和数组的最后一个元素，即高斯数 X 覆盖tile数的笛卡尔积
     auto totalSumRegion = vk::BufferCopy{(scene->getNumVertices() - 1) * sizeof(uint32_t), 0, sizeof(uint32_t)};
     // @火鼠 Note： 拷贝到了Host Buffer中， 应该就是这里导致无法正常渲染
     if (iters % 2 == 0) {
@@ -621,6 +627,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     renderCommandBuffer->pushConstants(preprocessSortPipeline->pipelineLayout.get(),
                                            vk::ShaderStageFlagBits::eCompute, 0,
                                            sizeof(uint32_t), &tileX);
+                                           
     renderCommandBuffer->dispatch(numGroups, 1, 1);
 
     sortKBufferEven->computeWriteReadBarrier(renderCommandBuffer.get());
@@ -755,34 +762,109 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     return true;
 }
 // 修改为计算机视觉坐标系 将 Z-back → Z-forward，匹配 CV 相机
-void Renderer::updateUniforms() {
+// void Renderer::updateUniforms_origin() {
+//     UniformBuffer data{};
+//     auto [width, height] = swapchain->swapchainExtent;
+
+//     data.width  = width;
+//     data.height = height;
+//     data.camera_position = glm::vec4(camera.position, 1.0f);
+
+//     // glm::mat4 rotation    = glm::mat4_cast(camera.rotation);
+//     // glm::mat4 translation = glm::translate(glm::mat4(1.0f), camera.position);
+//     // data.view_mat = glm::inverse(translation * rotation);
+//     glm::vec3 forward = camera.rotation * glm::vec3(0,0,-1);
+//     glm::vec3 up      = camera.rotation * glm::vec3(0,1,0);
+
+//     data.view_mat = glm::lookAt(
+//         camera.position,
+//         camera.position + forward,
+//         up
+//     );
+//     float aspect = float(width) / float(height);
+//     data.proj_mat = glm::perspective(
+//         glm::radians(camera.fov),
+//         aspect,
+//         camera.nearPlane,
+//         camera.farPlane
+//     ) ;
+//     // Vulkan Y-flip
+//     data.proj_mat[1][1] *= -1.0f;
+//     data.proj_mat = data.proj_mat * data.view_mat ;
+
+//     data.tan_fovx = std::tan(glm::radians(camera.fov) * 0.5f);
+//     data.tan_fovy = data.tan_fovx / aspect;
+
+//     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
+// }
+void Renderer::updateUniforms()
+{
     UniformBuffer data{};
     auto [width, height] = swapchain->swapchainExtent;
 
     data.width  = width;
     data.height = height;
+
     data.camera_position = glm::vec4(camera.position, 1.0f);
 
-    glm::mat4 rotation    = glm::mat4_cast(camera.rotation);
-    glm::mat4 translation = glm::translate(glm::mat4(1.0f), camera.position);
-    data.view_mat = glm::inverse(translation * rotation);
+    // ---- 正确构造 view ----
+    glm::vec3 forward = camera.rotation * glm::vec3(0,0,1);
+    glm::vec3 up      = camera.rotation * glm::vec3(0,1,0);
+
+    data.view_mat = glm::lookAtLH(
+        camera.position,
+        camera.position + forward,
+        up
+    );
 
     float aspect = float(width) / float(height);
-    data.proj_mat = glm::perspective(
+
+    glm::mat4 P = glm::perspective(
         glm::radians(camera.fov),
         aspect,
         camera.nearPlane,
         camera.farPlane
-    ) ;
-    // Vulkan Y-flip
-    data.proj_mat[1][1] *= -1.0f;
-    data.proj_mat = data.proj_mat * data.view_mat ;
+    );
+
+    // Vulkan clip correction
+    P[1][1] *= -1.0f;
+
+    // shader expects P*V
+    data.proj_mat = P * data.view_mat;
 
     data.tan_fovx = std::tan(glm::radians(camera.fov) * 0.5f);
     data.tan_fovy = data.tan_fovx / aspect;
 
     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
 }
+// 我们需要从数据集自动计算高斯中心位置，将相机移动过去
+void Renderer::resetCameraFromScene()
+{
+    glm::vec3 minP(scene->minP);
+    glm::vec3 maxP(scene->maxP);
 
+    glm::vec3 center = (minP + maxP) * 0.5f;
+    float radius = glm::length(maxP - minP) * 0.10f;
+    glm::vec3 extent = maxP - minP;
+
+    glm::vec3 dir;
+
+    if (extent.x > extent.y && extent.x > extent.z)
+        dir = glm::vec3(1,0,0);
+    else if (extent.y > extent.z)
+        dir = glm::vec3(0,1,0);
+    else
+        dir = glm::vec3(0,0,1);
+
+    camera.position = center + dir * radius * 2.5f;
+
+    camera.rotation = glm::quatLookAt(
+        glm::normalize(center - camera.position),
+        glm::vec3(0,1,0)
+    );
+
+    camera.nearPlane = 0.01f;
+    camera.farPlane  = radius * 50.0f;
+}
 Renderer::~Renderer() {
 }
