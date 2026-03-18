@@ -519,8 +519,8 @@ void Renderer::recordPreprocessCommandBuffer() {
     preprocessPipeline->bind(preprocessCommandBuffer, 0, 0);
     preprocessCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("preprocess_start"));
-    // 可以拦截dispatch 不让他调用这么多次？
     preprocessCommandBuffer->dispatch(numGroups, 1, 1);
+    //
     tileOverlapBuffer->computeWriteReadBarrier(preprocessCommandBuffer.get());
 
     vk::BufferCopy copyRegion = {0, 0, tileOverlapBuffer->size};
@@ -577,7 +577,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     // 读取了totalSumBufferHost ， 很有可能从主存读取； 这个结果会依赖相机；
     // 这里应该是开销集中的地方。
     uint32_t numInstances = totalSumBufferHost->readOne<uint32_t>();
-    spdlog::debug("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
+    spdlog::info("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
     // spdlog::debug("Num instances: {}", numInstances);
     // @火鼠: 关闭了GUI
     // guiManager.pushTextMetric("instances", numInstances);

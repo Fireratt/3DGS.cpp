@@ -2,40 +2,71 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "./common.glsl"
 
+// 使用 64 位整数（key 为 64-bit，包含 tileIndex + payload）
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
 
+// 输入：已经排序好的 key 列表（来自 radix sort）
+// key 的高 32 位：tile index
+// key 的低 32 位：payload（原始 Gaussian 索引等信息）
 layout (std430, set = 0, binding = 0) readonly buffer SortedList {
     uint64_t keys[];
 };
 
+// 输出：Tile Boundary Table
+// 对于每个 tile t：
+// boundaries[t * 2 + 0] = start index
+// boundaries[t * 2 + 1] = end index
 layout (std430, set = 0, binding = 1) writeonly buffer Out {
     uint boundaries[];
 };
 
+// push constants：实例总数（排序后的 key 数量）
 layout( push_constant ) uniform Constants
 {
     uint numInstances;
 };
 
+// 每个 workgroup 256 个线程
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 void main() {
+    // 当前线程处理的全局索引
     uint index = gl_GlobalInvocationID.x;
+
+    // 越界保护（DispatchX = ceil(numInstances / 256)）
     if (index >= numInstances) {
         return;
     }
 
+    // 从 key 中提取 tile index（高 32 位）
     uint key = uint(keys[index] >> 32);
+
+    // =========================
+    // 处理 tile 起始边界
+    // =========================
+
     if (index == 0) {
+        // 第一个元素一定是某个 tile 的起点
         boundaries[key * 2] = index;
     } else {
+        // 读取前一个元素的 tile index
         uint prevKey = uint(keys[index - 1] >> 32);
+
+        // 理论上排序后 prevKey <= key（如果不是说明排序有问题）
         if (prevKey > key) {
 //            debugPrintfEXT("prevKey > key: %d > %d\n", prevKey, key);
         }
+
+        // 当 tile index 发生变化时：
+        // - 当前 index 是新 tile 的 start
+        // - 当前 index 同时是上一个 tile 的 end
         if (key != prevKey) {
+            // 当前 tile 的起始位置
             boundaries[key * 2] = index;
+
+            // 上一个 tile 的结束位置
             boundaries[prevKey * 2 + 1] = index;
+
 //            if (prevKey == 61) {
 //                debugPrintfEXT("end | key: %d, index: %d\n", key, index);
 //            }
@@ -44,7 +75,14 @@ void main() {
 //            }
         }
     }
+
+    // =========================
+    // 处理最后一个 tile 的结束边界
+    // =========================
+
     if (index == numInstances - 1) {
+        // 最后一个元素对应 tile 的 end = numInstances
+        // 区间为 [start, end)
         boundaries[key * 2 + 1] = numInstances;
     }
 }
