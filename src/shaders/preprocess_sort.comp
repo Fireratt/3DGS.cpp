@@ -35,7 +35,7 @@ void main() {
     uint index = gl_GlobalInvocationID.x;
     #ifdef DEBUG
         if(index == 0){
-            debugPrintfEXT("PreProcess Sort : tileX :%u , prefixSum[0]:%u \n", tileX , prefixSum[0]);
+            debugPrintfEXT("PreProcess Sort , Lengthes: vertices:%u , prefixSum:%u , key:%u payload:%u\n", attr.length() , prefixSum.length() , keys.length() , payloads.length());
         }
     #endif
 
@@ -59,7 +59,9 @@ void main() {
 //            assert(tileIndex <= 1900, "key <= 1900 %d", tileIndex);
 
             uint depthBits = floatBitsToUint(attr[index].depth);
+            // 高位Tile，低位Depth，即可按照Tile+Depth进行整体排序。
             uint64_t k = (tileIndex << 32) | uint64_t(depthBits);
+            
             keys[ind] = k;
             payloads[ind] = index;
             ind++;

@@ -22,7 +22,7 @@ layout (std140, set = 1, binding = 0) uniform Params {
     float tan_fovy;
 };
 // 高斯属性
-layout (std430, set = 1, binding = 1) writeonly buffer VertexAttributes {
+layout (std430, set = 1, binding = 1) writeonly buffer VertexAttributes { 
     VertexAttribute attr[];
 };
 // 高斯占据的tile数目，数组大小为高斯数目
@@ -196,6 +196,7 @@ void main() {
         return;
     }
     assert(num_tiles_overlap <= width * height, "too many tiles overlap: %d\n", num_tiles_overlap);
+    // 这个aabb是TILE的AABB
     attr[index].aabb = bounding_box;
 //    assert(bounding_box.x < bounding_box.z && bounding_box.y < bounding_box.w, "invalid aabb: %d %d %d %d\n", ivec4(bounding_box));
     tiles_overlap[index] = num_tiles_overlap;
