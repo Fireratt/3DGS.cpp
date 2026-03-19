@@ -950,8 +950,9 @@ std::vector<Renderer::Camera> Renderer::readCamerasFromTransforms(const std::str
         glm::mat4 c2w = glm::transpose(glm::make_mat4(mat_data.data()));
 
         // 3. Convert from Blender (Y up, Z back) to COLMAP / OpenGL convention (Y down, Z forward)
-        c2w[1] = -c2w[1]; // flip Y axis
-        c2w[2] = -c2w[2]; // flip Z axis
+        // python中已完成flip
+        // c2w[1] = -c2w[1]; // flip Y axis
+        // c2w[2] = -c2w[2]; // flip Z axis
 
         // 4. Extract camera position (world space) — 4th column of C2W matrix
         glm::vec3 position = glm::vec3(c2w[3]);
