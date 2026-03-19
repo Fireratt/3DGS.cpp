@@ -124,10 +124,11 @@ float ndc2Pix(float v, int S)
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
+    #ifdef DEBUG
     if(index > 0 && index < 6){
         debugPrintfEXT("gaussian %d preprocess : location: %f %f %f vertLength:%d\n", index, vertices[index].position.x , vertices[index].position.y , vertices[index].position.z , vertices.length());
     }
-
+    #endif
     if (index >= vertices.length()) {
         return;
     }
@@ -188,10 +189,11 @@ void main() {
             uint(clamp(int((uv.y + radii + TILE_HEIGHT - 1) / TILE_HEIGHT), 0, tile_shape.y))
     );
     uint num_tiles_overlap = (bounding_box.z - bounding_box.x) * (bounding_box.w - bounding_box.y);
-    if(index > 0 && index < 6){
-        debugPrintfEXT("gaussian %d : radii: %f, uv: %f %f , depth(p_view.z):%f\n" , index , radii, uv.x, uv.y , p_view.z);
-    }
-
+    #ifdef DEBUG
+        if(index > 0 && index < 6){
+            debugPrintfEXT("gaussian %d : radii: %f, uv: %f %f , depth(p_view.z):%f\n" , index , radii, uv.x, uv.y , p_view.z);
+        }
+    #endif
     if (num_tiles_overlap == 0) {
         return;
     }

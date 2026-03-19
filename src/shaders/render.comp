@@ -95,9 +95,5 @@ void main() {
     // set pixel to red
 //    ivec2 pixel_coords = ivec2(curr_uv);
 //    imageStore(output_image, ivec2(curr_uv), vec4(1.0, 0.0, 0.0, 1.0));
-    // 采样下半屏的某个点
-    if(ivec2(curr_uv) == ivec2(0,480)){
-        debugPrintfEXT("c %f %f %f\n", c.x, c.y, c.z);
-    }
     imageStore(output_image, ivec2(curr_uv), vec4(c, 1.0f));
 }

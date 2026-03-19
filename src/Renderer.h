@@ -86,6 +86,8 @@ public:
         .nearPlane = 0.1f,
         .farPlane = 100.0f
     };
+    // 解析transforms.json并构建Camera列表
+    static std::vector<Camera> readCamerasFromTransforms(const std::string& path, const std::string& transformsfile);
 
 private:
     VulkanSplatting::RendererConfiguration configuration;
@@ -133,7 +135,7 @@ private:
     uint32_t currentImageIndex;
 
     std::vector<vk::UniqueSemaphore> renderFinishedSemaphores;
-
+    
 #ifdef __APPLE__
     uint32_t numRadixSortBlocksPerWorkgroup = 256;
 #else
@@ -145,6 +147,9 @@ private:
 
     unsigned int sortBufferSizeMultiplier = 1;
 
+    std::vector<Camera> cameraTrajectories ;
+
+    uint32_t trajectoryIndex = 0 ; 
     void initializeVulkan();
 
     void loadSceneToGPU();

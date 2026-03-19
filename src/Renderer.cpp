@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "nlohmann/json.hpp"
 
 #include <fstream>
 
@@ -11,6 +12,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>   // for glm::make_mat4
 
 #include "vulkan/Utils.h"
 
@@ -30,6 +32,10 @@ void Renderer::initialize() {
     recordPreprocessCommandBuffer();
     // 从数据集计算高斯中心
     // resetCameraFromScene() ; 
+    // 读取Trajectory
+    if(configuration.enableTrajectory){
+        this->cameraTrajectories = Renderer::readCamerasFromTransforms(".", configuration.trajectory) ; 
+    }
 }
 
 void Renderer::handleInput() {
@@ -411,7 +417,13 @@ void Renderer::draw() {
     }
 
 startOfRenderLoop:
-    handleInput();
+    // 使用轨迹时，不接受外部输入
+    if(this->configuration.enableTrajectory){
+        this->camera = this->cameraTrajectories[this->trajectoryIndex++] ;
+        this->trajectoryIndex = this->trajectoryIndex % this->cameraTrajectories.size() ; 
+    }else{
+        handleInput();
+    }
 
     updateUniforms();
     // 提交PreProcess
@@ -869,4 +881,95 @@ void Renderer::resetCameraFromScene()
     camera.farPlane  = radius * 50.0f;
 }
 Renderer::~Renderer() {
+}
+std::vector<Renderer::Camera> Renderer::readCamerasFromTransforms(const std::string& path, const std::string& transformsfile) {
+    std::vector<Camera> cam_infos;
+
+    // 使用nlohmann::json解析JSON文件
+    std::ifstream input(path + "/" + transformsfile);
+    if (!input.is_open()) {
+        spdlog::error("Failed to open transforms file: {}", path + "/" + transformsfile);
+        return cam_infos;
+    }
+
+    nlohmann::json contents;
+    input >> contents;
+    if (!contents.contains("camera_angle_x") || !contents["camera_angle_x"].is_number()) {
+        spdlog::error("Missing or invalid 'camera_angle_x' in transforms file");
+        return cam_infos;
+    }
+    float fovx = contents["camera_angle_x"].get<float>();
+
+    if (!contents.contains("frames") || !contents["frames"].is_array()) {
+        spdlog::error("Missing or invalid 'frames' array in transforms file");
+        return cam_infos;
+    }
+
+    for (auto& frame : contents["frames"]) {
+        if (!frame.contains("transform_matrix") || !frame["transform_matrix"].is_array()) {
+            spdlog::warn("Skipping frame: missing or invalid 'transform_matrix'");
+            continue;
+        }
+
+        // 1. 读取 transform_matrix (4x4 nested array -> flatten to 16 floats, row-major)
+        std::vector<float> mat_data;
+        try {
+            auto& mat_json = frame["transform_matrix"];
+            if (mat_json.size() != 4) {
+                spdlog::error("Invalid transform matrix row count: expected 4, got {}", mat_json.size());
+                continue;
+            }
+            for (size_t i = 0; i < 4; ++i) {
+                if (!mat_json[i].is_array() || mat_json[i].size() != 4) {
+                    spdlog::error("Invalid transform matrix row {}: not a 4-element array", i);
+                    mat_data.clear();
+                    break;
+                }
+                for (size_t j = 0; j < 4; ++j) {
+                    if (!mat_json[i][j].is_number()) {
+                        spdlog::error("Non-numeric value in transform matrix at [{},{}]", i, j);
+                        mat_data.clear();
+                        break;
+                    }
+                    mat_data.push_back(mat_json[i][j].get<float>());
+                }
+                if (mat_data.size() != (i + 1) * 4) break; // early exit on error
+            }
+        } catch (const std::exception& e) {
+            spdlog::error("Exception parsing transform_matrix: {}", e.what());
+            continue;
+        }
+
+        if (mat_data.size() != 16) {
+            spdlog::error("Invalid transform matrix size: expected 16, got {}", mat_data.size());
+            continue;
+        }
+
+        // 2. 转换为 GLM mat4 (row-major data → glm::make_mat4 assumes column-major in memory,
+        // but since we're transposing immediately, this effectively treats input as row-major)
+        glm::mat4 c2w = glm::transpose(glm::make_mat4(mat_data.data()));
+
+        // 3. Convert from Blender (Y up, Z back) to COLMAP / OpenGL convention (Y down, Z forward)
+        c2w[1] = -c2w[1]; // flip Y axis
+        c2w[2] = -c2w[2]; // flip Z axis
+
+        // 4. Extract camera position (world space) — 4th column of C2W matrix
+        glm::vec3 position = glm::vec3(c2w[3]);
+
+        // 5. Extract rotation as quaternion (C2W rotation)
+        glm::mat3 rot_mat(c2w);
+        glm::quat rotation = glm::quat_cast(rot_mat);
+
+        // 6. Create camera
+        Camera camera{};
+        camera.position = position;
+        camera.rotation = rotation;
+        camera.fov = glm::degrees(fovx);
+        camera.nearPlane = 0.1f;
+        camera.farPlane = 100.0f;
+
+        cam_infos.push_back(camera);
+    }
+
+    return cam_infos;
 }

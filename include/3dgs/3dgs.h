@@ -15,12 +15,12 @@ public:
         std::optional<uint8_t> physicalDeviceId = std::nullopt;
         bool immediateSwapchain = false;
         std::string scene;
-
+        std::string trajectory;
         float fov = 45.0f;
         float near = 0.2f;
         float far = 1000.0f;
         bool enableGui = true;
-
+        bool enableTrajectory = true ;  // 是否启用轨迹
         std::shared_ptr<Window> window;
     };
 

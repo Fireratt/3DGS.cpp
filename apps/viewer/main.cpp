@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
     args::ValueFlag<uint32_t> heightFlag{parser, "height", "Set window height", {'h', "height"}};
     args::Flag noGuiFlag{parser, "no-gui", "Disable GUI", { "no-gui"}};
     args::Positional<std::string> scenePath{parser, "scene", "Path to scene file", "scene.ply"};
+    args::Positional<std::string> cameraPath{parser, "trajectory", "Path to trajectory", ""};
 
     try {
         parser.ParseCLI(argc, argv);
@@ -59,13 +60,18 @@ int main(int argc, char** argv) {
             ? std::make_optional(envVars.get(physicalDeviceId).value())
             : std::nullopt,
         envVars.get_or(immediateSwapchain, false),
-        args::get(scenePath)
+        args::get(scenePath),
+        args::get(cameraPath)
     };
 
     // check that the scene file exists
     if (!std::filesystem::exists(config.scene)) {
         spdlog::critical("File does not exist: {}", config.scene);
         return 0;
+    }
+    if (!std::filesystem::exists(config.trajectory)) {
+        config.enableTrajectory = false ; 
+        spdlog::info("Trajectory File does not exist: {} , disable trajectory moving", config.trajectory);
     }
 
     if (validationLayersFlag) {
