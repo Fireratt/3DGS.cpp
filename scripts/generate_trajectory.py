@@ -1,7 +1,8 @@
 import json
 import numpy as np
+import sys
 import argparse
-# 示例：python generate_trajectory.py --axis z --radius 3.0 --height 5.0 --fov_deg 60 --num_frames 90 --output transforms_topdown.json
+# 示例：python generate_trajectory.py --axis z --up_angle 20 --radius 3.0 --height 2.0 --fov_deg 60 --num_frames 360 --output transforms_topdown.json
 def generate_circular_trajectory(
     radius=5.0,
     height=0.0,
@@ -19,18 +20,15 @@ def generate_circular_trajectory(
         'x': X up (rotate in YZ plane)
     """
     frames = []
-    
+    world_up = np.array([0.0, 1.0, 0.0])  # 永远Y-up
     # Define world up vector based on rotation axis
     if axis == 'y':
-        world_up = np.array([0.0, 1.0, 0.0])
         def pos_func(theta):
             return np.array([radius * np.cos(theta), height, radius * np.sin(theta)])
     elif axis == 'z':
-        world_up = np.array([0.0, 0.0, 1.0])  # Z is up
         def pos_func(theta):
             return np.array([radius * np.cos(theta), radius * np.sin(theta), height])
     elif axis == 'x':
-        world_up = np.array([1.0, 0.0, 0.0])
         def pos_func(theta):
             return np.array([height, radius * np.cos(theta), radius * np.sin(theta)])
     else:
@@ -68,8 +66,8 @@ def generate_circular_trajectory(
         # Build C2W matrix (OpenGL/Blender convention)
         c2w = np.eye(4)
         c2w[:3, 0] = right      # X axis (right)
-        c2w[:3, 1] = up         # Y axis (up)
-        c2w[:3, 2] = -forward   # Z axis (backward)
+        c2w[:3, 1] = up
+        c2w[:3, 2] = -forward
         c2w[:3, 3] = camera_pos
 
         frames.append({
@@ -79,9 +77,17 @@ def generate_circular_trajectory(
 
     out = {
         "camera_angle_x": float(camera_angle_x),
-        "frames": frames
+        "frames": frames,
+        "meta": {
+            "cmd": " ".join(sys.argv),
+            "radius": radius,
+            "height": height,
+            "num_frames": num_frames,
+            "up_angle_deg": up_angle_deg,
+            "fov_deg": float(np.degrees(camera_angle_x)),
+            "axis": axis
+        }
     }
-
     with open(output_path, "w") as f:
         json.dump(out, f, indent=2)
 
