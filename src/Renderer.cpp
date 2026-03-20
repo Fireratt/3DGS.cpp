@@ -4,7 +4,7 @@
 #include <fstream>
 
 #include "vulkan/Swapchain.h"
-
+#include <filesystem>
 #include <memory>
 #include "shaders.h"
 #include <utility>
@@ -34,7 +34,7 @@ void Renderer::initialize() {
     // resetCameraFromScene() ; 
     // 读取Trajectory
     if(configuration.enableTrajectory){
-        this->cameraTrajectories = Renderer::readCamerasFromTransforms(".", configuration.trajectory) ; 
+        this->cameraTrajectories = Renderer::readCamerasFromTransforms("", configuration.trajectory) ; 
     }
 }
 
@@ -884,12 +884,18 @@ Renderer::~Renderer() {
 }
 std::vector<Renderer::Camera> Renderer::readCamerasFromTransforms(const std::string& path, const std::string& transformsfile) {
     std::vector<Camera> cam_infos;
-
+    namespace fs = std::filesystem;
     // 使用nlohmann::json解析JSON文件
-    std::ifstream input(path + "/" + transformsfile);
+    fs::path traj_path(transformsfile);
+
+    if (!traj_path.is_absolute()) {
+        traj_path = fs::current_path() / traj_path;
+    }
+
+    std::ifstream input(traj_path);
+
     if (!input.is_open()) {
-        spdlog::error("Failed to open transforms file: {}", path + "/" + transformsfile);
-        return cam_infos;
+        spdlog::error("Failed to open transforms file: {}", traj_path.string());
     }
 
     nlohmann::json contents;
