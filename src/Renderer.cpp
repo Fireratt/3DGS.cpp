@@ -582,6 +582,7 @@ void Renderer::recordPreprocessCommandBuffer() {
 
 // 这个是每次都重新录制的，也与NumInstances每次都在变化保持一致。
 bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
+    auto startTime = std::chrono::high_resolution_clock::now();
     if (!renderCommandBuffer) {
         renderCommandBuffer = std::move(context->device->allocateCommandBuffersUnique(
             vk::CommandBufferAllocateInfo(commandPool.get(), vk::CommandBufferLevel::ePrimary, 1))[0]);
@@ -772,6 +773,8 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
                                              vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
     }
     renderCommandBuffer->end();
+    auto endTime = std::chrono::high_resolution_clock::now();
+    spdlog::info("[Firerat] Finish Record In:{} microseconds " , std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count()) ; 
 
     return true;
 }
