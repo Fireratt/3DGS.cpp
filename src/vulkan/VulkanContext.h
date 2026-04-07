@@ -17,7 +17,8 @@ struct Image {
     vk::Format format;
     vk::Extent2D extent;
     std::optional<vk::UniqueFramebuffer> framebuffer;
-
+    VmaAllocation allocation = VK_NULL_HANDLE ; 
+    VmaAllocator allocator = VK_NULL_HANDLE ; 
     Image(const vk::Image &image, vk::UniqueImageView &&image_view, vk::Format format,
           const vk::Extent2D &extent, std::optional<vk::UniqueFramebuffer> &&framebuffer = std::nullopt)
             : image(image),
@@ -25,6 +26,11 @@ struct Image {
               format(format),
               extent(extent),
               framebuffer(std::move(framebuffer)) {
+    }
+    ~Image(){
+        if(allocation != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE){
+            vmaDestroyImage(allocator, static_cast<VkImage>(image), allocation);
+        }
     }
 };
 
