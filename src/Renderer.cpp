@@ -406,6 +406,22 @@ void Renderer::draw() {
     }
     context->device->resetFences(inflightFences[0].get());
 
+    // ====== 新增：帧时间测量 ======
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    if (!firstFrame) {
+        auto delta = std::chrono::duration_cast<std::chrono::microseconds>(
+            currentTime - lastFrameTime
+        );
+        double frameTimeUs = static_cast<double>(delta.count());
+        double fps = 1e6 / frameTimeUs;  // 可选：计算 FPS
+
+        // 输出帧时间
+        spdlog::info("frame time: {:.2f} μs)", frameTimeUs);
+    } else {
+        firstFrame = false;
+    }
+    lastFrameTime = currentTime;
+
     auto res = context->device->acquireNextImageKHR(swapchain->swapchain.get(), UINT64_MAX,
                                                     swapchain->imageAvailableSemaphores[0].get(),
                                                     nullptr, &currentImageIndex);

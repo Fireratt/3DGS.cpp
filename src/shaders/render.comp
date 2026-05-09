@@ -1,99 +1,140 @@
 #version 450
 #extension GL_GOOGLE_include_directive : enable
-#include "./common.glsl"
+#include "./common.glsl"  // 包含共享常量、结构体定义（如 VertexAttribute）
 
+// 启用 64 位整数运算支持（尽管此处未显式使用）
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
-//#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+// float16 扩展被注释掉，说明当前未使用半精度
 
+// === Buffer Bindings ===
+
+// 输入：所有高斯椭球的属性（位置、颜色、协方差、不透明度等）
 layout (std430, set = 0, binding = 0) readonly buffer Vertices {
-    VertexAttribute attr[];
+    VertexAttribute attr[];  // 每个高斯对应一个 VertexAttribute
 };
 
+// 输入：每个 tile 的高斯索引起始/结束位置（由 CPU 或预处理阶段生成）
 layout (std430, set = 0, binding = 1) readonly buffer Boundaries {
-    uint boundaries[];
+    uint boundaries[];  // 每个 tile 对应两个 uint: [start, end)
 };
 
+// 输入：全局排序后的高斯索引列表（按深度或其他启发式排序）
 layout (std430, set = 0, binding = 2) readonly buffer SortedVertices {
-    uint sorted_vertices[];
+    uint sorted_vertices[];  // 存储的是 attr[] 的索引
 };
 
+// 输出：渲染目标图像（RGBA）
 layout (set = 1, binding = 0) uniform writeonly image2D output_image;
 
-layout( push_constant ) uniform Constants
-{
+// 推送常量：图像分辨率
+layout( push_constant ) uniform Constants {
     uint width;
     uint height;
 };
 
+// 工作组大小：每个工作组处理一个 TILE_WIDTH × TILE_HEIGHT 的图像块
 layout (local_size_x = TILE_WIDTH, local_size_y = TILE_HEIGHT, local_size_z = 1) in;
 
+
 void main() {
+    // 当前工作组（tile）在网格中的坐标
     uint tileX = gl_WorkGroupID.x;
     uint tileY = gl_WorkGroupID.y;
+
+    // 当前线程在 tile 内的局部坐标（即像素偏移）
     uint localX = gl_LocalInvocationID.x;
     uint localY = gl_LocalInvocationID.y;
 
-    uvec2 curr_uv = uvec2(tileX * TILE_WIDTH + localX, tileY * TILE_HEIGHT + localY);
+    // 计算当前线程对应的全局像素坐标 (u, v)
+    uvec2 curr_uv = uvec2(
+        tileX * TILE_WIDTH + localX,
+        tileY * TILE_HEIGHT + localY
+    );
+
+    // 边界检查：防止越界写入
     if (curr_uv.x >= width || curr_uv.y >= height) {
         return;
     }
 
-    uint tiles_width = ((width + TILE_WIDTH - 1) / TILE_WIDTH);
+    // 计算横向 tile 数量（用于将 2D tile 坐标映射为 1D 索引）
+    uint tiles_width = (width + TILE_WIDTH - 1) / TILE_WIDTH;
 
-    uint start = boundaries[(tileX + tileY * tiles_width) * 2];
-    uint end = boundaries[(tileX + tileY * tiles_width) * 2 + 1];
+    // 计算当前 tile 在 boundaries 数组中的偏移（每个 tile 占 2 个 uint）
+    uint tile_index = tileX + tileY * tiles_width;
+    uint start = boundaries[tile_index * 2];      // 该 tile 中第一个高斯的索引（在 sorted_vertices 中）
+    uint end   = boundaries[tile_index * 2 + 1];  // 该 tile 中最后一个高斯的下一个位置
 
-    float T = 1.0f;
-    vec3 c = vec3(0.0f);
+    // 初始化透射率 T（Transmittance）和累积颜色 c
+    float T = 1.0f;          // 初始完全透明（无遮挡）
+    vec3 c = vec3(0.0f);     // 初始颜色为黑
 
-    if (gl_GlobalInvocationID.x == 10000) {
-//        debugPrintfEXT("c %f %f %f\n", attr[vertex_key].color_radii.x, attr[vertex_key].color_radii.y, attr[vertex_key].color_radii.z);
-//        debugPrintfEXT("uv %d %d\n", attr[vertex_key].uv.x, attr[vertex_key].uv.y);
-//        debugPrintfEXT("curr_uv %d %d\n", curr_uv.x, curr_uv.y);
-//        debugPrintfEXT("co %f %f %f %f\n", attr[vertex_key].conic_opacity.x, attr[vertex_key].conic_opacity.y, attr[vertex_key].conic_opacity.z, attr[vertex_key].conic_opacity.w);
-    }
+    // ========== 调试代码（已注释）==========
+    // 可用于打印特定像素或高斯的信息（需启用 debugPrintfEXT）
+    // if (gl_GlobalInvocationID.x == 10000) { ... }
 
+    // 边界异常检查（防御性编程）
     if (start > end && gl_LocalInvocationIndex == 0) {
-//        debugPrintfEXT("ERROR ----- start %d end %d at %d (TX %d TY %d wid %d)\n", start, end, tileX + tileY * tiles_width, tileX, tileY, tiles_width);
-//        debugPrintfEXT("      ----- %d %d %d %d\n", boundaries[tileX + tileY * tiles_width - 2], boundaries[tileX + tileY * tiles_width - 1], boundaries[tileX + tileY * tiles_width + 2], boundaries[tileX + tileY * tiles_width + 3]);
+        // 若 start > end，说明预处理数据有误
+        // debugPrintfEXT("ERROR ----- start %d end %d ...\n", start, end, ...);
     }
 
+    // ========== 核心光栅化循环 ==========
+    // 遍历分配给当前 tile 的所有高斯（已按某种顺序排序）
     for (uint i = start; i < end; i++) {
+        // 获取当前高斯在 attr[] 中的真实索引
         uint vertex_key = sorted_vertices[i];
-        vec2 uv = attr[vertex_key].uv;
-        vec2 distance = uv - vec2(curr_uv);
-        vec4 co = attr[vertex_key].conic_opacity;
-        float power = -0.5f * (co.x * distance.x * distance.x + co.z * distance.y * distance.y) - co.y * distance.x * distance.y;
 
+        // 读取该高斯在屏幕空间的中心位置 (uv)
+        vec2 uv = attr[vertex_key].uv;
+
+        // 计算当前像素到高斯中心的偏移向量
+        vec2 distance = uv - vec2(curr_uv);
+
+        // 读取预计算的“圆锥-不透明度”参数：
+        // co.xyz = (conic_xx, conic_xy, conic_yy) —— 协方差的逆矩阵相关项
+        // co.w   = opacity（原始不透明度）
+        vec4 co = attr[vertex_key].conic_opacity;
+
+        // 计算高斯在当前像素处的指数项（负二次型）
+        // power = -0.5 * d^T * Σ^{-1} * d
+        float power = -0.5f * (
+            co.x * distance.x * distance.x +     // Σ^{-1}_{xx} * dx²
+            co.z * distance.y * distance.y       // Σ^{-1}_{yy} * dy²
+        ) - co.y * distance.x * distance.y;      // 2 * Σ^{-1}_{xy} * dx * dy （注意 co.y 已包含因子）
+
+        // 若 power > 0，说明该高斯在此像素处贡献极小（可跳过）
+        // 注：实际高斯值为 exp(power)，power 应 ≤ 0
         if (power > 0.0f) {
             continue;
         }
 
-        if (gl_GlobalInvocationID.x == 100) {
-//            debugPrintfEXT("radius %f\n", attr[vertex_key].color_radii.w);
-        }
-
-
+        // 计算当前高斯在此像素的 alpha（考虑截断防止过饱和）
         float alpha = min(0.99f, co.w * exp(power));
+
+        // 忽略极低 alpha（低于 1/255，人眼不可见）
         if (alpha < 1.0f / 255.0f) {
             continue;
         }
 
-        float test_T = T * (1 - alpha);
+        // 计算新透射率：T' = T * (1 - alpha)
+        float test_T = T * (1.0f - alpha);
+
+        // ========== 像素早退（Early Ray Termination）==========
+        // 如果剩余透射率极低（< 0.01%），后续高斯贡献可忽略，提前退出
         if (test_T < 0.0001f) {
             break;
         }
 
+        // 累积颜色：c += color * alpha * T
+        // 注意：attr[vertex_key].color_radii.xyz 存储的是预乘了球谐系数的颜色
         c += attr[vertex_key].color_radii.xyz * alpha * T;
+
+        // 更新透射率
         T = test_T;
     }
 
-//    if (index == 10000) {
-//        debugPrintfEXT("c %f %f %f\n", c.x, c.y, c.z);
-//    }
-
-    // set pixel to red
-//    ivec2 pixel_coords = ivec2(curr_uv);
-//    imageStore(output_image, ivec2(curr_uv), vec4(1.0, 0.0, 0.0, 1.0));
+    // ========== 写入最终颜色 ==========
+    // 注意：3DGS 使用 over blending，最终 alpha 通常设为 1.0（因背景假设为黑）
+    // 若需透明背景，可输出 T 作为 alpha，但此处固定为 1.0
     imageStore(output_image, ivec2(curr_uv), vec4(c, 1.0f));
 }
