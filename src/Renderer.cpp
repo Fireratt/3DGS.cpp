@@ -416,7 +416,7 @@ void Renderer::draw() {
         double fps = 1e6 / frameTimeUs;  // 可选：计算 FPS
 
         // 输出帧时间
-        spdlog::info("frame time: {:.2f} μs)", frameTimeUs);
+        spdlog::info("frame time: {:.2f} microsecond)", frameTimeUs);
     } else {
         firstFrame = false;
     }
