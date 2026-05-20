@@ -60,8 +60,8 @@ mat2 compute_cov2d(vec3 cam) {
     );
     mat3 T = W * J;
     mat3 cov2d = transpose(T) * Sigma * T;
-    cov2d[0][0] += 0.3f;
-    cov2d[1][1] += 0.3f;
+    cov2d[0][0] += 0.25f;
+    cov2d[1][1] += 0.25f;
     return mat2(cov2d);
 }
 

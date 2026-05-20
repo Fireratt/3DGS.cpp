@@ -8,10 +8,8 @@
 
 Swapchain::Swapchain(const std::shared_ptr<VulkanContext>& context, const std::shared_ptr<Window>& window,
                      bool immediate) : context(context), window(window), immediate(immediate) {
-    auto createSwapchainImages = [&](){this->createOffscreenImages() ; } ; 
-
     createSwapchain();
-    createStagingBuffers() ;
+    createStagingBuffers();
     createSwapchainImages();
 }
 
@@ -71,7 +69,7 @@ void Swapchain::createSwapchain() {
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage;
+    createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc;
 
     std::vector<uint32_t> uniqueQueueFamilies;
     for (auto& queue: context->queues) {
@@ -235,14 +233,13 @@ void Swapchain::createStagingBuffers() {
     }
 }
 void Swapchain::recreate() {
-    auto createSwapchainImages = [&](){this->createOffscreenImages() ; } ; 
-
-
     context->device->waitIdle();
     swapchain.reset();
     swapchainImages.clear();
+    imageAvailableSemaphores.clear();
 
     createSwapchain();
+    createStagingBuffers();
     createSwapchainImages();
     spdlog::debug("Swapchain recreated");
 }

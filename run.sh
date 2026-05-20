@@ -1,0 +1,1 @@
+./build/apps/viewer/3dgs_viewer --width=1440  --height=900 ../res/gaussian_splatting/FO_dataset/playroom/point_cloud/iteration_7000/point_cloud.ply

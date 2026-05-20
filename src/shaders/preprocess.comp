@@ -69,9 +69,9 @@ mat2 compute_cov2d(vec3 cam) {
     mat3 T = W * J;
     // 通过 T 和 Sigma 计算投影后的 2D 协方差矩阵，变换过程包括将 3D 协方差矩阵压缩成 2D
     mat3 cov2d = transpose(T) * Sigma * T;
-    // 为了增加噪声，防止协方差矩阵奇异（零矩阵），增加对角线的常数偏移
-    cov2d[0][0] += 0.3f;
-    cov2d[1][1] += 0.3f;
+    // 为了增加噪声，防止协方差矩阵奇异（零矩阵），增加对角线的常数偏移。
+    cov2d[0][0] += 0.25f;
+    cov2d[1][1] += 0.25f;
     return mat2(cov2d);
 }
 
@@ -157,7 +157,8 @@ void main() {
     mat2 cov2d = compute_cov2d(p_view.xyz);
     float det = determinant(cov2d);
     // 行列式为负说明非正定，两种情况可能导致非正定：高斯在相机后方，或误差问题。但总之conv2D必须满足正定，否则高斯非法 不该渲染，所以可以直接return不渲染
-    if (det <= 0.0) {
+    // 扩大行列式阈值。这里是需要过滤：数值上不可逆，而非数学上不可逆（行列式过小，取逆之后数值爆炸）
+    if (det <= 1e-6) {
         return;
     }
     // 求逆

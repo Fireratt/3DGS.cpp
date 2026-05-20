@@ -48,6 +48,18 @@ public:
         }
     };
 
+
+    Camera camera{
+        .position = glm::vec3(0.0f, -1.0f, -2.5f),
+        .rotation = glm::quatLookAt(
+            glm::normalize(glm::vec3(0.0f, 0.0f, -1.0f)),
+            glm::vec3(0.0f, +1.0f,  0.0f)
+        ),
+        .fov = 45.0f,
+        .nearPlane = 0.1f,
+        .farPlane = 100.0f,
+    };
+
     struct RadixSortPushConstants {
         uint32_t g_num_elements; // == NUM_ELEMENTS
         uint32_t g_shift; // (*)
@@ -75,17 +87,7 @@ public:
 
     ~Renderer();
     // 我们需要从数据集自动计算高斯中心位置，将相机移动过去
-    void resetCameraFromScene() ;   
-    Camera camera {
-        .position = glm::vec3(0.0f, -1.0f, -2.5f),
-        .rotation = glm::quatLookAt(
-            glm::normalize(glm::vec3(0.0f, 0.0f, -1.0f)), // 看向原点
-            glm::vec3(0.0f, +1.0f,  0.0f)
-        ),
-        .fov = 45.0f,
-        .nearPlane = 0.1f,
-        .farPlane = 100.0f
-    };
+    void resetCameraFromScene();
     // 解析transforms.json并构建Camera列表
     static std::vector<Camera> readCamerasFromTransforms(const std::string& path, const std::string& transformsfile);
 
@@ -147,9 +149,9 @@ private:
 
     unsigned int sortBufferSizeMultiplier = 1;
 
-    std::vector<Camera> cameraTrajectories ;
+    std::vector<Camera> cameraTrajectories;
 
-    uint32_t trajectoryIndex = 0 ; 
+    uint32_t trajectoryIndex = 0;
     void initializeVulkan();
 
     void loadSceneToGPU();

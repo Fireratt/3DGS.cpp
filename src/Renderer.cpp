@@ -404,8 +404,19 @@ void Renderer::draw() {
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
     }
-    swapchain->DumpImage("./tmp" ,currentImageIndex);
     context->device->resetFences(inflightFences[0].get());
+
+    // Acquire swapchain image for on-screen rendering
+    auto acquireRes = context->device->acquireNextImageKHR(
+        *swapchain->swapchain, UINT64_MAX, swapchain->imageAvailableSemaphores[0].get(), nullptr, &currentImageIndex
+    );
+    if (acquireRes == vk::Result::eErrorOutOfDateKHR) {
+        recreateSwapchain();
+        return;
+    }
+    if (acquireRes != vk::Result::eSuccess && acquireRes != vk::Result::eSuboptimalKHR) {
+        throw std::runtime_error("Failed to acquire swapchain image");
+    }
 startOfRenderLoop:
     // 使用轨迹时，不接受外部输入
     if(this->configuration.enableTrajectory){
@@ -431,30 +442,44 @@ startOfRenderLoop:
     }
     vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eComputeShader;
     // 提交渲染
+    vk::Semaphore waitSemaphore = swapchain->imageAvailableSemaphores[0].get();
+    vk::Semaphore signalSemaphore = renderFinishedSemaphores[0].get();
     submitInfo = vk::SubmitInfo{}
-            .setWaitSemaphoreCount(0)
-            .setCommandBuffers(renderCommandBuffer.get()) ;
+            .setWaitSemaphores(waitSemaphore)
+            .setWaitDstStageMask(waitStage)
+            .setCommandBuffers(renderCommandBuffer.get())
+            .setSignalSemaphores(signalSemaphore);
     context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
 
-    // vk::PresentInfoKHR presentInfo{};
-    // presentInfo.waitSemaphoreCount = 1;
-    // presentInfo.pWaitSemaphores = &renderFinishedSemaphores[0].get();
-    // presentInfo.swapchainCount = 1;
-    // presentInfo.pSwapchains = &swapchain->swapchain.get();
-    // presentInfo.pImageIndices = &currentImageIndex;
+    if (!configuration.enableGui) {
+        ret = context->device->waitForFences(inflightFences[0].get(), VK_TRUE, UINT64_MAX);
+        if (ret != vk::Result::eSuccess) {
+            throw std::runtime_error("Failed to wait for fence");
+        }
+        swapchain->DumpImage("./tmp", currentImageIndex);
+        context->device->resetFences(inflightFences[0].get());
+        return;
+    }
 
-    // try {
-    //     ret = context->queues[VulkanContext::Queue::PRESENT].queue.presentKHR(presentInfo);
-    // } catch (vk::OutOfDateKHRError& e) {
-    //     recreateSwapchain();
-    //     return;
-    // }
+    vk::PresentInfoKHR presentInfo{};
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &signalSemaphore;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &swapchain->swapchain.get();
+    presentInfo.pImageIndices = &currentImageIndex;
 
-    // if (ret == vk::Result::eErrorOutOfDateKHR || ret == vk::Result::eSuboptimalKHR) {
-    //     recreateSwapchain();
-    // } else if (ret != vk::Result::eSuccess) {
-    //     throw std::runtime_error("Failed to present swapchain image");
-    // }
+    try {
+        ret = context->queues[VulkanContext::Queue::PRESENT].queue.presentKHR(presentInfo);
+    } catch (vk::OutOfDateKHRError&) {
+        recreateSwapchain();
+        return;
+    }
+
+    if (ret == vk::Result::eErrorOutOfDateKHR || ret == vk::Result::eSuboptimalKHR) {
+        recreateSwapchain();
+    } else if (ret != vk::Result::eSuccess) {
+        throw std::runtime_error("Failed to present swapchain image");
+    }
 }
 
 void Renderer::run() {
@@ -851,21 +876,20 @@ void Renderer::updateUniforms()
 
     float aspect = float(width) / float(height);
 
-    glm::mat4 P = glm::perspective(
+    glm::mat4 P = glm::perspectiveLH_ZO(
         glm::radians(camera.fov),
         aspect,
         camera.nearPlane,
         camera.farPlane
     );
 
-    // Vulkan clip correction
-    P[1][1] *= -1.0f;
+    // Note: no Y-flip here; screen-space mapping in preprocess expects +Y up in NDC.
 
     // shader expects P*V
     data.proj_mat = P * data.view_mat;
 
-    data.tan_fovx = std::tan(glm::radians(camera.fov) * 0.5f);
-    data.tan_fovy = data.tan_fovx / aspect;
+    data.tan_fovy = std::tan(glm::radians(camera.fov) * 0.5f);
+    data.tan_fovx = data.tan_fovy * aspect;
 
     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
 }
