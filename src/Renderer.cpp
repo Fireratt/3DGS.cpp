@@ -852,21 +852,20 @@ void Renderer::updateUniforms()
 
     float aspect = float(width) / float(height);
 
-    glm::mat4 P = glm::perspective(
+    glm::mat4 P = glm::perspectiveLH_ZO(
         glm::radians(camera.fov),
         aspect,
         camera.nearPlane,
         camera.farPlane
     );
 
-    // Vulkan clip correction
-    P[1][1] *= -1.0f;
+    // Note: no Y-flip here; screen-space mapping in preprocess expects +Y up in NDC.
 
     // shader expects P*V
     data.proj_mat = P * data.view_mat;
 
-    data.tan_fovx = std::tan(glm::radians(camera.fov) * 0.5f);
-    data.tan_fovy = data.tan_fovx / aspect;
+    data.tan_fovy = std::tan(glm::radians(camera.fov) * 0.5f);
+    data.tan_fovx = data.tan_fovy * aspect;
 
     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
 }
