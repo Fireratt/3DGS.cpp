@@ -23,18 +23,53 @@ layout (std430, set = 0, binding = 2) readonly buffer SortedVertices {
     uint sorted_vertices[];  // 存储的是 attr[] 的索引
 };
 
+layout (std430, set = 0, binding = 3) readonly buffer FrameStatsBuffer {
+    uint visibleGaussianCount;
+    uint visibleGaussianInstanceCount;
+    uint maxTileLoad;
+    uint tileCount;
+} frameStats;
+
 // 输出：渲染目标图像（RGBA）
 layout (set = 1, binding = 0) uniform writeonly image2D output_image;
 
-// 推送常量：图像分辨率
+// 推送常量：图像分辨率和调试开关
 layout( push_constant ) uniform Constants {
     uint width;
     uint height;
+    uint showTileHeatmap;
+    uint _padding;
 };
 
 // 工作组大小：每个工作组处理一个 TILE_WIDTH × TILE_HEIGHT 的图像块
 layout (local_size_x = TILE_WIDTH, local_size_y = TILE_HEIGHT, local_size_z = 1) in;
 
+vec3 heatmapColor(float value) {
+    const float greenThreshold = 0.20f;
+    const float yellowThreshold = 0.55f;
+    const float redThreshold = 0.90f;
+    float t = clamp(value, 0.0f, 1.0f);
+    if (t < greenThreshold) {
+        return mix(vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), t / greenThreshold);
+    }
+    if (t < yellowThreshold) {
+        return mix(vec3(0.0f, 1.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f),
+                   (t - greenThreshold) / (yellowThreshold - greenThreshold));
+    }
+    if (t < redThreshold) {
+        return mix(vec3(1.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f),
+                   (t - yellowThreshold) / (redThreshold - yellowThreshold));
+    }
+    return vec3(1.0f, 0.0f, 0.0f);
+}
+
+float heatmapIntensity(uint tileLoad) {
+    if (tileLoad == 0 || frameStats.maxTileLoad == 0) {
+        return 0.0f;
+    }
+    float normalized = clamp(float(tileLoad) / float(frameStats.maxTileLoad), 0.0f, 1.0f);
+    return pow(normalized, 0.75f);
+}
 
 void main() {
     // 当前工作组（tile）在网格中的坐标
@@ -63,6 +98,10 @@ void main() {
     uint tile_index = tileX + tileY * tiles_width;
     uint start = boundaries[tile_index * 2];      // 该 tile 中第一个高斯的索引（在 sorted_vertices 中）
     uint end   = boundaries[tile_index * 2 + 1];  // 该 tile 中最后一个高斯的下一个位置
+
+    uint tileLoad = end >= start ? end - start : 0;
+    float heat = heatmapIntensity(tileLoad);
+    vec3 heatColor = heatmapColor(heat);
 
     // 初始化透射率 T（Transmittance）和累积颜色 c
     float T = 1.0f;          // 初始完全透明（无遮挡）
@@ -136,5 +175,9 @@ void main() {
     // ========== 写入最终颜色 ==========
     // 注意：3DGS 使用 over blending，最终 alpha 通常设为 1.0（因背景假设为黑）
     // 若需透明背景，可输出 T 作为 alpha，但此处固定为 1.0
+    if (showTileHeatmap != 0 && heat > 0.0f) {
+        float overlayAlpha = mix(0.18f, 0.62f, heat);
+        c = mix(c, heatColor, overlayAlpha);
+    }
     imageStore(output_image, ivec2(curr_uv), vec4(c, 1.0f));
 }

@@ -4,6 +4,8 @@
 #define GLM_SWIZZLE
 
 #include <atomic>
+#include <fstream>
+#include <optional>
 #include "3dgs.h"
 #include "vulkan/Window.h"
 #include "GSScene.h"
@@ -55,6 +57,27 @@ public:
         uint32_t g_num_blocks_per_workgroup; // == NUM_BLOCKS_PER_WORKGROUP
     };
 
+    struct alignas(16) FrameStats {
+        uint32_t visibleGaussianCount;
+        uint32_t visibleGaussianInstanceCount;
+        uint32_t maxTileLoad;
+        uint32_t tileCount;
+    };
+
+    struct FrameStatsPushConstants {
+        uint32_t numGaussians;
+        uint32_t numTiles;
+        uint32_t numInstances;
+        uint32_t _padding;
+    };
+
+    struct RenderPushConstants {
+        uint32_t width;
+        uint32_t height;
+        uint32_t showTileHeatmap;
+        uint32_t _padding;
+    };
+
     explicit Renderer(VulkanSplatting::RendererConfiguration configuration);
 
     void createGui();
@@ -77,7 +100,7 @@ public:
     // 我们需要从数据集自动计算高斯中心位置，将相机移动过去
     void resetCameraFromScene() ;   
     Camera camera {
-        .position = glm::vec3(0.0f, -1.0f, -2.5f),
+        .position = glm::vec3(0.0f, -0.0f, -2.5f),
         .rotation = glm::quatLookAt(
             glm::normalize(glm::vec3(0.0f, 0.0f, -1.0f)), // 看向原点
             glm::vec3(0.0f, +1.0f,  0.0f)
@@ -105,6 +128,7 @@ private:
     std::shared_ptr<ComputePipeline> sortHistPipeline;
     std::shared_ptr<ComputePipeline> sortPipeline;
     std::shared_ptr<ComputePipeline> tileBoundaryPipeline;
+    std::shared_ptr<ComputePipeline> frameStatsPipeline;
 
     std::shared_ptr<Buffer> uniformBuffer;
     std::shared_ptr<Buffer> vertexAttributeBuffer;
@@ -116,6 +140,12 @@ private:
     std::shared_ptr<Buffer> sortHistBuffer;
     std::shared_ptr<Buffer> totalSumBufferHost;
     std::shared_ptr<Buffer> tileBoundaryBuffer;
+    std::shared_ptr<Buffer> frameStatsDeviceBuffer;
+    std::shared_ptr<Buffer> tileInstancesReadbackBuffer;
+    std::vector<std::shared_ptr<Buffer>> frameStatsReadbackBuffers;
+    std::vector<uint64_t> frameStatsReadbackFrameIds;
+    std::vector<double> frameLatencyMsRing;
+    std::vector<uint64_t> frameLatencyFrameIds;
     std::shared_ptr<Buffer> sortVBufferEven;
     std::shared_ptr<Buffer> sortVBufferOdd;
 
@@ -133,6 +163,17 @@ private:
     vk::UniqueCommandBuffer renderCommandBuffer;
 
     uint32_t currentImageIndex;
+    uint64_t frameCounter = 0;
+    static constexpr uint32_t FRAME_STATS_READBACK_SLOTS = 2;
+    std::optional<uint32_t> pendingFrameStatsReadbackSlot;
+    FrameStats latestFrameStats{};
+    bool hasLatestFrameStats = false;
+    std::ofstream frameStatsCsv;
+    bool tileInstancesCsvWritten = false;
+    bool tileInstancesCsvReadbackPending = false;
+    uint64_t tileInstancesCsvReadbackFrameId = 0;
+    uint32_t tileInstancesCsvReadbackTileX = 0;
+    uint32_t tileInstancesCsvReadbackTileY = 0;
     std::chrono::high_resolution_clock::time_point lastFrameTime;
     bool firstFrame = true;  // 避免第一帧输出无效数据
     std::vector<vk::UniqueSemaphore> renderFinishedSemaphores;
@@ -165,6 +206,8 @@ private:
 
     void createTileBoundaryPipeline();
 
+    void createFrameStatsPipeline();
+
     void createRenderPipeline();
 
     void recordPreprocessCommandBuffer();
@@ -172,6 +215,17 @@ private:
     bool recordRenderCommandBuffer(uint32_t currentFrame);
 
     void createCommandPool();
+
+    bool shouldCollectFrameStats() const;
+
+    void collectCompletedFrameStats();
+
+    void emitFrameStats(uint64_t frameId, const FrameStats& stats);
+
+    void openFrameStatsCsv();
+    bool shouldCaptureTileInstancesCsv() const;
+
+    void writeTileInstancesCsv(uint64_t frameId);
 
     void updateUniforms();
 };

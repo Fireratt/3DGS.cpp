@@ -1,0 +1,47 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#include "./common.glsl"
+
+layout (std430, set = 0, binding = 0) readonly buffer NumTilesOverlap {
+    uint tiles_overlap[];
+};
+
+layout (std430, set = 0, binding = 1) readonly buffer TileBoundaries {
+    uint boundaries[];
+};
+
+layout (std430, set = 0, binding = 2) buffer FrameStatsBuffer {
+    uint visibleGaussianCount;
+    uint visibleGaussianInstanceCount;
+    uint maxTileLoad;
+    uint tileCount;
+} stats;
+
+layout( push_constant ) uniform Constants {
+    uint numGaussians;
+    uint numTiles;
+    uint numInstances;
+    uint _padding;
+};
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    if (index == 0) {
+        stats.visibleGaussianInstanceCount = numInstances;
+        stats.tileCount = numTiles;
+    }
+
+    if (index < numGaussians && tiles_overlap[index] > 0) {
+        atomicAdd(stats.visibleGaussianCount, 1);
+    }
+
+    if (index < numTiles) {
+        uint start = boundaries[index * 2];
+        uint end = boundaries[index * 2 + 1];
+        uint tileLoad = end >= start ? end - start : 0;
+        atomicMax(stats.maxTileLoad, tileLoad);
+    }
+}

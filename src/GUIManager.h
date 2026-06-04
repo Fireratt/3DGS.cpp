@@ -13,6 +13,8 @@ public:
 
     void buildGui();
 
+    void setDebugOptions(bool* showTileHeatmap, bool* enableFrameStats, bool* printFrameStats);
+
     static void pushTextMetric(const std::string& name, float value);
 
     static void pushMetric(const std::string& name, float value);
@@ -24,6 +26,11 @@ public:
     static bool wantCaptureKeyboard();
 
     bool mouseCapture = false;
+
+private:
+    bool* showTileHeatmap = nullptr;
+    bool* enableFrameStats = nullptr;
+    bool* printFrameStats = nullptr;
 
 };
 

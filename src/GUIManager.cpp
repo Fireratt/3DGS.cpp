@@ -42,6 +42,12 @@ void GUIManager::init() {
     ImPlot::CreateContext();
 }
 
+void GUIManager::setDebugOptions(bool* showTileHeatmap, bool* enableFrameStats, bool* printFrameStats) {
+    this->showTileHeatmap = showTileHeatmap;
+    this->enableFrameStats = enableFrameStats;
+    this->printFrameStats = printFrameStats;
+}
+
 void GUIManager::buildGui() {
     if (mouseCapture) {
         ImGui::BeginDisabled(true);
@@ -92,6 +98,18 @@ void GUIManager::buildGui() {
     ImGui::Text("Left click: capture mouse");
     ImGui::Text("ESC: release mouse");
     ImGui::Text("Mouse captured: %s", mouseCapture ? "true" : "false");
+    if (showTileHeatmap || enableFrameStats || printFrameStats) {
+        ImGui::Separator();
+        if (showTileHeatmap) {
+            ImGui::Checkbox("Tile heatmap", showTileHeatmap);
+        }
+        if (enableFrameStats) {
+            ImGui::Checkbox("Frame stats", enableFrameStats);
+        }
+        if (printFrameStats) {
+            ImGui::Checkbox("Print stats", printFrameStats);
+        }
+    }
     ImGui::End();
 
     if (mouseCapture) {

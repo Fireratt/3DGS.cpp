@@ -14,6 +14,10 @@ void GUIManager::buildGui() {
 
 }
 
+void GUIManager::setDebugOptions(bool* showTileHeatmap, bool* enableFrameStats, bool* printFrameStats) {
+
+}
+
 void GUIManager::pushTextMetric(const std::string& name, float value) {
 
 }

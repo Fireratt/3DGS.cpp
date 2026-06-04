@@ -75,7 +75,7 @@ void GSScene::load(const std::shared_ptr<VulkanContext>&context) {
     vertexBuffer->uploadFrom(vertexStagingBuffer);
 
     auto endTime = std::chrono::high_resolution_clock::now();
-    spdlog::info("Loaded {} in {}ms", filename,
+    spdlog::info("Loaded {} gaussians of {} in {}ms",header.numVertices , filename,
                  std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count());
 
     precomputeCov3D(context);

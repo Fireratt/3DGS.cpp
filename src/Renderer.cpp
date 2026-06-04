@@ -1,7 +1,9 @@
 #include "Renderer.h"
 #include "nlohmann/json.hpp"
 
+#include <algorithm>
 #include <fstream>
+#include <limits>
 
 #include "vulkan/Swapchain.h"
 #include <filesystem>
@@ -17,7 +19,7 @@
 #include "vulkan/Utils.h"
 
 #include <spdlog/spdlog.h>
-
+#define TILE_SIZE 16
 void Renderer::initialize() {
     initializeVulkan();
     createGui();
@@ -27,6 +29,7 @@ void Renderer::initialize() {
     createRadixSortPipeline();
     createPreprocessSortPipeline();
     createTileBoundaryPipeline();
+    createFrameStatsPipeline();
     createRenderPipeline();
     createCommandPool();
     recordPreprocessCommandBuffer();
@@ -36,6 +39,7 @@ void Renderer::initialize() {
     if(configuration.enableTrajectory){
         this->cameraTrajectories = Renderer::readCamerasFromTransforms("", configuration.trajectory) ; 
     }
+    openFrameStatsCsv();
 }
 
 void Renderer::handleInput() {
@@ -128,9 +132,12 @@ void Renderer::recreateSwapchain() {
     }
 
     auto [width, height] = swapchain->swapchainExtent;
-    auto tileX = (width + 16 - 1) / 16;
-    auto tileY = (height + 16 - 1) / 16;
+    auto tileX = (width + TILE_SIZE - 1) / TILE_SIZE;
+    auto tileY = (height + TILE_SIZE - 1) / TILE_SIZE;
     tileBoundaryBuffer->realloc(tileX * tileY * sizeof(uint32_t) * 2);
+    if (tileInstancesReadbackBuffer) {
+        tileInstancesReadbackBuffer->realloc(tileBoundaryBuffer->size);
+    }
 
     recordPreprocessCommandBuffer();
     createRenderPipeline();
@@ -233,6 +240,8 @@ void Renderer::createGui() {
     imguiManager = std::make_shared<ImguiManager>(context, swapchain, window);
     imguiManager->init();
     guiManager.init();
+    guiManager.setDebugOptions(&configuration.showTileHeatmap, &configuration.enableFrameStats,
+                               &configuration.printFrameStats);
 }
 
 // 前缀和 ， Pingpong Buffer需要判定奇偶性 见recordPreprocessCommandBuffer 
@@ -349,10 +358,13 @@ void Renderer::createPreprocessSortPipeline() {
 void Renderer::createTileBoundaryPipeline() {
     spdlog::debug("Creating tile boundary pipeline");
     auto [width, height] = swapchain->swapchainExtent;
-    auto tileX = (width + 16 - 1) / 16;
-    auto tileY = (height + 16 - 1) / 16;
+    auto tileX = (width + TILE_SIZE - 1) / TILE_SIZE;
+    auto tileY = (height + TILE_SIZE - 1) / TILE_SIZE;
     // 输出
     tileBoundaryBuffer = Buffer::storage(context, tileX * tileY * sizeof(uint32_t) * 2, false);
+    if (!configuration.tileInstancesCsvPath.empty()) {
+        tileInstancesReadbackBuffer = Buffer::staging(context, tileBoundaryBuffer->size);
+    }
 
     tileBoundaryPipeline = std::make_shared<ComputePipeline>(
         context, std::make_shared<Shader>(context, "tile_boundary", SPV_TILE_BOUNDARY, SPV_TILE_BOUNDARY_len));
@@ -370,6 +382,162 @@ void Renderer::createTileBoundaryPipeline() {
     tileBoundaryPipeline->build();
 }
 
+void Renderer::createFrameStatsPipeline() {
+    spdlog::debug("Creating frame stats pipeline");
+    static_assert(sizeof(FrameStats) == sizeof(uint32_t) * 4, "FrameStats must match frame_stats.comp");
+
+    frameStatsDeviceBuffer = Buffer::storage(context, sizeof(FrameStats), false, 0, "frameStatsDeviceBuffer");
+    frameStatsReadbackBuffers.clear();
+    frameStatsReadbackBuffers.reserve(FRAME_STATS_READBACK_SLOTS);
+    frameStatsReadbackFrameIds.assign(FRAME_STATS_READBACK_SLOTS, 0);
+    frameLatencyMsRing.assign(FRAME_STATS_READBACK_SLOTS, 0.0);
+    frameLatencyFrameIds.assign(FRAME_STATS_READBACK_SLOTS, std::numeric_limits<uint64_t>::max());
+    for (uint32_t i = 0; i < FRAME_STATS_READBACK_SLOTS; ++i) {
+        frameStatsReadbackBuffers.push_back(Buffer::staging(context, sizeof(FrameStats)));
+    }
+
+    frameStatsPipeline = std::make_shared<ComputePipeline>(
+        context, std::make_shared<Shader>(context, "frame_stats", SPV_FRAME_STATS, SPV_FRAME_STATS_len));
+    auto descriptorSet = std::make_shared<DescriptorSet>(context, FRAMES_IN_FLIGHT);
+    descriptorSet->bindBufferToDescriptorSet(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
+                                             tileOverlapBuffer);
+    descriptorSet->bindBufferToDescriptorSet(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
+                                             tileBoundaryBuffer);
+    descriptorSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
+                                             frameStatsDeviceBuffer);
+    descriptorSet->build();
+
+    frameStatsPipeline->addDescriptorSet(0, descriptorSet);
+    frameStatsPipeline->addPushConstant(vk::ShaderStageFlagBits::eCompute, 0, sizeof(FrameStatsPushConstants));
+    frameStatsPipeline->build();
+}
+
+bool Renderer::shouldCollectFrameStats() const {
+    return configuration.showTileHeatmap || configuration.enableFrameStats || configuration.printFrameStats ||
+           !configuration.statsCsvPath.empty();
+}
+
+void Renderer::openFrameStatsCsv() {
+    if (configuration.statsCsvPath.empty()) {
+        return;
+    }
+
+    frameStatsCsv.open(configuration.statsCsvPath, std::ios::out | std::ios::trunc);
+    if (!frameStatsCsv.is_open()) {
+        throw std::runtime_error("Failed to open frame stats CSV: " + configuration.statsCsvPath);
+    }
+    frameStatsCsv << "frame,frame_latency_ms,visible_gaussians,gaussian_instances,max_tile_load,average_tile_load\n";
+}
+
+bool Renderer::shouldCaptureTileInstancesCsv() const {
+    return !configuration.tileInstancesCsvPath.empty() && !tileInstancesCsvWritten &&
+           tileInstancesReadbackBuffer != nullptr;
+}
+
+void Renderer::writeTileInstancesCsv(uint64_t frameId) {
+    if (!tileInstancesReadbackBuffer || tileInstancesCsvWritten) {
+        tileInstancesCsvReadbackPending = false;
+        return;
+    }
+
+    const uint32_t tileX = tileInstancesCsvReadbackTileX;
+    const uint32_t tileY = tileInstancesCsvReadbackTileY;
+    if (tileX == 0 || tileY == 0) {
+        tileInstancesCsvReadbackPending = false;
+        return;
+    }
+
+    vmaInvalidateAllocation(context->allocator, tileInstancesReadbackBuffer->allocation, 0,
+                            tileInstancesReadbackBuffer->size);
+
+    const auto* boundaries = static_cast<const uint32_t *>(tileInstancesReadbackBuffer->allocation_info.pMappedData);
+    std::ofstream csv(configuration.tileInstancesCsvPath, std::ios::out | std::ios::trunc);
+    if (!csv.is_open()) {
+        throw std::runtime_error("Failed to open tile instances CSV: " + configuration.tileInstancesCsvPath);
+    }
+
+    csv << "frame,tile_x,tile_y,tile_index,pixel_x,pixel_y,gaussian_instances,range_start,range_end\n";
+    for (uint32_t y = 0; y < tileY; ++y) {
+        for (uint32_t x = 0; x < tileX; ++x) {
+            const uint32_t tileIndex = x + y * tileX;
+            const uint32_t start = boundaries[tileIndex * 2];
+            const uint32_t end = boundaries[tileIndex * 2 + 1];
+            const uint32_t instances = end >= start ? end - start : 0;
+            csv << frameId << ','
+                << x << ','
+                << y << ','
+                << tileIndex << ','
+                << x * TILE_SIZE << ','
+                << y * TILE_SIZE << ','
+                << instances << ','
+                << start << ','
+                << end << '\n';
+        }
+    }
+
+    tileInstancesCsvWritten = true;
+    tileInstancesCsvReadbackPending = false;
+    spdlog::info("Wrote first-frame tile Gaussian instance CSV: {}", configuration.tileInstancesCsvPath);
+}
+
+
+void Renderer::collectCompletedFrameStats() {
+    if (!pendingFrameStatsReadbackSlot.has_value()) {
+        return;
+    }
+
+    const uint32_t slot = pendingFrameStatsReadbackSlot.value();
+    auto& readbackBuffer = frameStatsReadbackBuffers[slot];
+    vmaInvalidateAllocation(context->allocator, readbackBuffer->allocation, 0, sizeof(FrameStats));
+
+    latestFrameStats = *static_cast<FrameStats *>(readbackBuffer->allocation_info.pMappedData);
+    hasLatestFrameStats = true;
+    const uint64_t frameId = frameStatsReadbackFrameIds[slot];
+    pendingFrameStatsReadbackSlot.reset();
+
+    emitFrameStats(frameId, latestFrameStats);
+}
+
+void Renderer::emitFrameStats(uint64_t frameId, const FrameStats& stats) {
+    const float averageTileLoad = stats.tileCount == 0
+        ? 0.0f
+        : static_cast<float>(stats.visibleGaussianInstanceCount) / static_cast<float>(stats.tileCount);
+    double frameLatencyMs = 0.0;
+    if (!frameLatencyMsRing.empty()) {
+        const uint32_t latencySlot = static_cast<uint32_t>(frameId % frameLatencyMsRing.size());
+        if (frameLatencyFrameIds[latencySlot] == frameId) {
+            frameLatencyMs = frameLatencyMsRing[latencySlot];
+        }
+    }
+
+    if (stats.visibleGaussianInstanceCount < stats.visibleGaussianCount) {
+        spdlog::warn("Frame {} stats invalid: instances {} < visible gaussians {}", frameId,
+                     stats.visibleGaussianInstanceCount, stats.visibleGaussianCount);
+    }
+
+    if (configuration.enableGui) {
+        guiManager.pushTextMetric("visible gaussians", static_cast<float>(stats.visibleGaussianCount));
+        guiManager.pushTextMetric("gaussian instances", static_cast<float>(stats.visibleGaussianInstanceCount));
+        guiManager.pushTextMetric("max tile load", static_cast<float>(stats.maxTileLoad));
+        guiManager.pushTextMetric("average tile load", averageTileLoad);
+        guiManager.pushTextMetric("frame latency ms", static_cast<float>(frameLatencyMs));
+    }
+
+    if (configuration.printFrameStats) {
+        spdlog::info("Frame {}\n\nVisible Gaussians:        {}\nGaussian Instances:      {}\nMax Tile Load:           {}",
+                     frameId, stats.visibleGaussianCount, stats.visibleGaussianInstanceCount, stats.maxTileLoad);
+    }
+
+    if (frameStatsCsv.is_open()) {
+        frameStatsCsv << frameId << ','
+                      << frameLatencyMs << ','
+                      << stats.visibleGaussianCount << ','
+                      << stats.visibleGaussianInstanceCount << ','
+                      << stats.maxTileLoad << ','
+                      << averageTileLoad << '\n';
+    }
+}
+
 void Renderer::createRenderPipeline() {
     spdlog::debug("Creating render pipeline");
     renderPipeline = std::make_shared<ComputePipeline>(
@@ -381,6 +549,8 @@ void Renderer::createRenderPipeline() {
                                         tileBoundaryBuffer);
     inputSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
                                         sortVBufferEven);
+    inputSet->bindBufferToDescriptorSet(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
+                                        frameStatsDeviceBuffer);
     // inputSet->bindBufferToDescriptorSet(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
     //                                     sortKBufferOdd);
     inputSet->build();
@@ -393,7 +563,7 @@ void Renderer::createRenderPipeline() {
     outputSet->build();
     renderPipeline->addDescriptorSet(0, inputSet);
     renderPipeline->addDescriptorSet(1, outputSet);
-    renderPipeline->addPushConstant(vk::ShaderStageFlagBits::eCompute, 0, sizeof(uint32_t) * 2);
+    renderPipeline->addPushConstant(vk::ShaderStageFlagBits::eCompute, 0, sizeof(RenderPushConstants));
     renderPipeline->build();
 }
 
@@ -404,7 +574,6 @@ void Renderer::draw() {
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
     }
-    context->device->resetFences(inflightFences[0].get());
 
     // ====== 新增：帧时间测量 ======
     auto currentTime = std::chrono::high_resolution_clock::now();
@@ -414,13 +583,22 @@ void Renderer::draw() {
         );
         double frameTimeUs = static_cast<double>(delta.count());
         double fps = 1e6 / frameTimeUs;  // 可选：计算 FPS
+        if (!frameLatencyMsRing.empty() && frameCounter > 0) {
+            const uint64_t completedFrameId = frameCounter - 1;
+            const uint32_t latencySlot = static_cast<uint32_t>(completedFrameId % frameLatencyMsRing.size());
+            frameLatencyMsRing[latencySlot] = frameTimeUs / 1000.0;
+            frameLatencyFrameIds[latencySlot] = completedFrameId;
+        }
 
         // 输出帧时间
-        spdlog::info("frame time: {:.2f} microsecond)", frameTimeUs);
+        spdlog::debug("frame time: {:.2f} microsecond)", frameTimeUs);
     } else {
         firstFrame = false;
     }
     lastFrameTime = currentTime;
+
+    collectCompletedFrameStats();
+    context->device->resetFences(inflightFences[0].get());
 
     auto res = context->device->acquireNextImageKHR(swapchain->swapchain.get(), UINT64_MAX,
                                                     swapchain->imageAvailableSemaphores[0].get(),
@@ -462,6 +640,13 @@ startOfRenderLoop:
             .setSignalSemaphores(renderFinishedSemaphores[0].get())
             .setWaitDstStageMask(waitStage);
     context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
+    if (tileInstancesCsvReadbackPending && tileInstancesCsvReadbackFrameId == frameCounter) {
+        ret = context->device->waitForFences(inflightFences[0].get(), VK_TRUE, UINT64_MAX);
+        if (ret != vk::Result::eSuccess) {
+            throw std::runtime_error("Failed to wait for fence");
+        }
+        writeTileInstancesCsv(frameCounter);
+    }
 
     vk::PresentInfoKHR presentInfo{};
     presentInfo.waitSemaphoreCount = 1;
@@ -482,6 +667,8 @@ startOfRenderLoop:
     } else if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to present swapchain image");
     }
+
+    frameCounter++;
 }
 
 void Renderer::run() {
@@ -606,7 +793,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     // 读取了totalSumBufferHost ， 很有可能从主存读取； 这个结果会依赖相机；
     // 这里应该是开销集中的地方。
     uint32_t numInstances = totalSumBufferHost->readOne<uint32_t>();
-    spdlog::info("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ; 
+    spdlog::debug("[Firerat] Record RenderCommand as NumInstances:{}" , numInstances) ;
     // spdlog::debug("Num instances: {}", numInstances);
     // @火鼠: 关闭了GUI
     // guiManager.pushTextMetric("instances", numInstances);
@@ -653,7 +840,8 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     preprocessSortPipeline->bind(renderCommandBuffer, 0, iters % 2 == 0 ? 0 : 1);
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                             queryManager->registerQuery("preprocess_sort_start"));
-    uint32_t tileX = (swapchain->swapchainExtent.width + 16 - 1) / 16;
+    uint32_t tileX = (swapchain->swapchainExtent.width + TILE_SIZE - 1) / TILE_SIZE;
+    uint32_t tileY = (swapchain->swapchainExtent.height + TILE_SIZE - 1) / TILE_SIZE;
     // assert(tileX == 50);
     renderCommandBuffer->pushConstants(preprocessSortPipeline->pipelineLayout.get(),
                                            vk::ShaderStageFlagBits::eCompute, 0,
@@ -727,15 +915,51 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("tile_boundary_end"));
 
+    if (shouldCollectFrameStats()) {
+        renderCommandBuffer->fillBuffer(frameStatsDeviceBuffer->buffer, 0, sizeof(FrameStats), 0);
+        Utils::BarrierBuilder().queueFamilyIndex(context->queues[VulkanContext::Queue::COMPUTE].queueFamily)
+                .addBufferBarrier(frameStatsDeviceBuffer, vk::AccessFlagBits::eTransferWrite,
+                                  vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite)
+                .build(renderCommandBuffer.get(), vk::PipelineStageFlagBits::eTransfer,
+                       vk::PipelineStageFlagBits::eComputeShader);
+
+        tileOverlapBuffer->computeWriteReadBarrier(renderCommandBuffer.get());
+        frameStatsPipeline->bind(renderCommandBuffer, currentFrame, 0);
+        FrameStatsPushConstants statsConstants{
+            static_cast<uint32_t>(scene->getNumVertices()),
+            tileX * tileY,
+            numInstances,
+            0
+        };
+        renderCommandBuffer->pushConstants(frameStatsPipeline->pipelineLayout.get(),
+                                           vk::ShaderStageFlagBits::eCompute, 0,
+                                           sizeof(FrameStatsPushConstants), &statsConstants);
+        const uint32_t statsWorkItems = std::max(statsConstants.numGaussians, statsConstants.numTiles);
+        renderCommandBuffer->dispatch((statsWorkItems + 255) / 256, 1, 1);
+
+        Utils::BarrierBuilder().queueFamilyIndex(context->queues[VulkanContext::Queue::COMPUTE].queueFamily)
+                .addBufferBarrier(frameStatsDeviceBuffer, vk::AccessFlagBits::eShaderWrite,
+                                  vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eShaderRead)
+                .build(renderCommandBuffer.get(), vk::PipelineStageFlagBits::eComputeShader,
+                       vk::PipelineStageFlagBits::eTransfer | vk::PipelineStageFlagBits::eComputeShader);
+
+        const uint32_t readbackSlot = static_cast<uint32_t>(frameCounter % frameStatsReadbackBuffers.size());
+        vk::BufferCopy statsCopyRegion = {0, 0, sizeof(FrameStats)};
+        renderCommandBuffer->copyBuffer(frameStatsDeviceBuffer->buffer, frameStatsReadbackBuffers[readbackSlot]->buffer,
+                                        1, &statsCopyRegion);
+        pendingFrameStatsReadbackSlot = readbackSlot;
+        frameStatsReadbackFrameIds[readbackSlot] = frameCounter;
+    }
+
     // render
     renderPipeline->bind(renderCommandBuffer, 0, std::vector<uint32_t>{0, currentImageIndex});
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("render_start"));
     auto [width, height] = swapchain->swapchainExtent;
-    uint32_t constants[2] = {width, height};
+    RenderPushConstants constants{width, height, configuration.showTileHeatmap ? 1u : 0u, 0u};
     renderCommandBuffer->pushConstants(renderPipeline->pipelineLayout.get(),
                                        vk::ShaderStageFlagBits::eCompute, 0,
-                                       sizeof(uint32_t) * 2, constants);
+                                       sizeof(RenderPushConstants), &constants);
 
     // image layout transition: undefined -> general
     vk::ImageMemoryBarrier imageMemoryBarrier{};
@@ -751,7 +975,22 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
                                          vk::PipelineStageFlagBits::eComputeShader,
                                          vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
 
-    renderCommandBuffer->dispatch((width + 15) / 16, (height + 15) / 16, 1);
+    renderCommandBuffer->dispatch((width + TILE_SIZE-1) / TILE_SIZE, (height + TILE_SIZE-1) / TILE_SIZE, 1);
+    if (shouldCaptureTileInstancesCsv()) {
+        Utils::BarrierBuilder().queueFamilyIndex(context->queues[VulkanContext::Queue::COMPUTE].queueFamily)
+                .addBufferBarrier(tileBoundaryBuffer, vk::AccessFlagBits::eShaderRead,
+                                  vk::AccessFlagBits::eTransferRead)
+                .build(renderCommandBuffer.get(), vk::PipelineStageFlagBits::eComputeShader,
+                       vk::PipelineStageFlagBits::eTransfer);
+
+        vk::BufferCopy tileInstancesCopyRegion = {0, 0, tileBoundaryBuffer->size};
+        renderCommandBuffer->copyBuffer(tileBoundaryBuffer->buffer, tileInstancesReadbackBuffer->buffer, 1,
+                                        &tileInstancesCopyRegion);
+        tileInstancesCsvReadbackPending = true;
+        tileInstancesCsvReadbackFrameId = frameCounter;
+        tileInstancesCsvReadbackTileX = tileX;
+        tileInstancesCsvReadbackTileY = tileY;
+    }
 
     // image layout transition: general -> present
     imageMemoryBarrier.oldLayout = vk::ImageLayout::eGeneral;
@@ -790,7 +1029,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     }
     renderCommandBuffer->end();
     auto endTime = std::chrono::high_resolution_clock::now();
-    spdlog::info("[Firerat] Finish Record In:{} microseconds " , std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count()) ; 
+    spdlog::debug("[Firerat] Finish Record In:{} microseconds " , std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count()) ;
 
     return true;
 }
