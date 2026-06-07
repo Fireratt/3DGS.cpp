@@ -1,0 +1,2 @@
+./build/apps/viewer/3dgs_viewer --frame-stats --stats-csv=profile.csv --tile-instances-csv tileHeat.csv --no-gui --width=1920 --height=1080 ../res/gaussian_splatting/FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply
+# ./build/apps/viewer/3dgs_viewer --frame-stats --stats-csv=profile.csv --tile-instances-csv --no-gui --width=1920 --height=1080 ../res/gaussian_splatting/FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply scripts/transforms_axisX.json

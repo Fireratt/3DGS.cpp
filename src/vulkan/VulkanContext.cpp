@@ -129,6 +129,19 @@ bool VulkanContext::isDeviceSuitable(vk::PhysicalDevice device, std::optional<vk
     }
 
     if (surface.has_value()) {
+        bool supportsSurface = false;
+        auto queueFamilies = device.getQueueFamilyProperties();
+        for (uint32_t i = 0; i < queueFamilies.size(); i++) {
+            if (device.getSurfaceSupportKHR(i, surface.value())) {
+                supportsSurface = true;
+                break;
+            }
+        }
+        if (!supportsSurface) {
+            spdlog::debug("Physical device {} does not support the requested surface", properties.deviceName);
+            return false;
+        }
+
         auto surfaceCapabilities = device.getSurfaceCapabilitiesKHR(surface.value());
         auto surfaceFormats = device.getSurfaceFormatsKHR(surface.value());
         auto presentModes = device.getSurfacePresentModesKHR(surface.value());
@@ -164,6 +177,9 @@ void VulkanContext::selectPhysicalDevice(std::optional<uint8_t> id, std::optiona
             throw std::runtime_error("Invalid physical device id");
         }
         physicalDevice = devices[id.value()];
+        if (!isDeviceSuitable(physicalDevice, surface)) {
+            throw std::runtime_error("Selected physical device does not support required extensions or requested surface");
+        }
         spdlog::info("Selected physical device (by index): {}", physicalDevice.getProperties().deviceName);
         return;
     }
@@ -173,6 +189,10 @@ void VulkanContext::selectPhysicalDevice(std::optional<uint8_t> id, std::optiona
         if (isDeviceSuitable(device, surface)) {
             suitableDevices.push_back(device);
         }
+    }
+
+    if (suitableDevices.empty()) {
+        throw std::runtime_error("No Vulkan physical device supports the required extensions and requested surface");
     }
 
     physicalDevice = suitableDevices[0];

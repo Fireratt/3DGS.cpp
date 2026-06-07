@@ -3,8 +3,15 @@
 
 #ifdef VKGS_ENABLE_GLFW
 #include "vulkan/windowing/GLFWWindow.h"
-std::shared_ptr<Window> VulkanSplatting::createGlfwWindow(std::string name, int width, int height) {
-    return std::make_shared<GLFWWindow>(name, width, height);
+std::shared_ptr<Window> VulkanSplatting::createGlfwWindow(std::string name, int width, int height, bool visible) {
+    return std::make_shared<GLFWWindow>(name, width, height, visible);
+}
+#endif
+
+#ifdef VKGS_ENABLE_HEADLESS
+#include "vulkan/windowing/HeadlessWindow.h"
+std::shared_ptr<Window> VulkanSplatting::createHeadlessWindow(int width, int height) {
+    return std::make_shared<HeadlessWindow>(width, height);
 }
 #endif
 

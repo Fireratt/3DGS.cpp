@@ -79,6 +79,9 @@ else ()
 endif ()
 
 add_compile_definitions(VKGS_ENABLE_GLFW)
+if (UNIX AND NOT APPLE)
+    add_compile_definitions(VKGS_ENABLE_HEADLESS)
+endif ()
 
 add_subdirectory(src)
 add_subdirectory(apps)

@@ -5,7 +5,7 @@
 
 class GLFWWindow final : public Window {
 public:
-    GLFWWindow(std::string name, int width, int height);
+    GLFWWindow(std::string name, int width, int height, bool visible = true);
 
     VkSurfaceKHR createSurface(std::shared_ptr<VulkanContext> context) override;
 
