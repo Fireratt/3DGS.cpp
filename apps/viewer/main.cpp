@@ -1,10 +1,37 @@
 #include <filesystem>
 #include <iostream>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <vector>
+#include <vulkan/vulkan_core.h>
 #include <libenvpp/env.hpp>
 
 #include "3dgs.h"
 #include "args.hxx"
 #include "spdlog/spdlog.h"
+namespace {
+bool hasVulkanInstanceExtension(const char* extensionName) {
+    uint32_t extensionCount = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr) != VK_SUCCESS) {
+        return false;
+    }
+
+    std::vector<VkExtensionProperties> extensions(extensionCount);
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data()) != VK_SUCCESS) {
+        return false;
+    }
+
+    for (const auto& extension: extensions) {
+        if (std::strcmp(extension.extensionName, extensionName) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+}
+
 
 int main(int argc, char** argv) {
     spdlog::set_pattern("[%H:%M:%S] [%^%L%$] %v");
@@ -25,6 +52,14 @@ int main(int argc, char** argv) {
     args::ValueFlag<uint32_t> widthFlag{parser, "width", "Set window width", {'w', "width"}};
     args::ValueFlag<uint32_t> heightFlag{parser, "height", "Set window height", {'h', "height"}};
     args::Flag noGuiFlag{parser, "no-gui", "Disable GUI", { "no-gui"}};
+#ifdef VKGS_ENABLE_HEADLESS
+    args::Flag headlessFlag{parser, "headless", "Run without a visible window", {"headless"}};
+#endif
+    args::Flag tileHeatmapFlag{parser, "tile-heatmap", "Start with tile load heatmap enabled", {"tile-heatmap"}};
+    args::Flag frameStatsFlag{parser, "frame-stats", "Collect per-frame Gaussian statistics", {"frame-stats"}};
+    args::Flag printFrameStatsFlag{parser, "print-frame-stats", "Print per-frame Gaussian statistics", {"print-frame-stats"}};
+    args::ValueFlag<std::string> statsCsvFlag{parser, "stats-csv", "Write per-frame Gaussian statistics CSV", {"stats-csv"}};
+    args::ValueFlag<std::string> tileInstancesCsvFlag{parser, "tile-instances-csv", "Write first-frame per-tile Gaussian instance CSV", {"tile-instances-csv"}};
     args::Positional<std::string> scenePath{parser, "scene", "Path to scene file", "scene.ply"};
     args::Positional<std::string> cameraPath{parser, "trajectory", "Path to trajectory", ""};
 
@@ -48,11 +83,23 @@ int main(int argc, char** argv) {
     auto validationLayers = pre.register_variable<bool>("VALIDATION_LAYERS");
     auto physicalDeviceId = pre.register_variable<uint8_t>("PHYSICAL_DEVICE");
     auto immediateSwapchain = pre.register_variable<bool>("IMMEDIATE_SWAPCHAIN");
+#ifdef VKGS_ENABLE_HEADLESS
+    auto headless = pre.register_variable<bool>("HEADLESS");
+#endif
     auto envVars = pre.parse_and_validate();
 
     if (args::get(verboseFlag)) {
         spdlog::set_level(spdlog::level::debug);
     }
+
+#ifdef VKGS_ENABLE_HEADLESS
+    auto enableHeadless = envVars.get_or(headless, false);
+    if (headlessFlag) {
+        enableHeadless = args::get(headlessFlag);
+    }
+#else
+    constexpr bool enableHeadless = false;
+#endif
 
     VulkanSplatting::RendererConfiguration config{
         envVars.get_or(validationLayers, false),
@@ -86,28 +133,62 @@ int main(int argc, char** argv) {
         config.immediateSwapchain = args::get(immediateSwapchainFlag);
     }
 
-    if (noGuiFlag) {
+    if (enableHeadless || noGuiFlag) {
         config.enableGui = false;
     } else {
         config.enableGui = true;
     }
 
+    config.showTileHeatmap = args::get(tileHeatmapFlag);
+    config.enableFrameStats = args::get(frameStatsFlag);
+    config.printFrameStats = args::get(printFrameStatsFlag);
+    if (statsCsvFlag) {
+        config.statsCsvPath = args::get(statsCsvFlag);
+    }
+    if (tileInstancesCsvFlag) {
+        config.tileInstancesCsvPath = args::get(tileInstancesCsvFlag);
+    }
+    if (config.printFrameStats || !config.statsCsvPath.empty()) {
+        config.enableFrameStats = true;
+    }
+
     auto width = widthFlag ? args::get(widthFlag) : 1280;
     auto height = heightFlag ? args::get(heightFlag) : 720;
-
-    config.window = VulkanSplatting::createGlfwWindow("Vulkan Splatting", width, height);
-
-#ifndef DEBUG
     try {
+
+#ifdef VKGS_ENABLE_HEADLESS
+    if (enableHeadless) {
+        const char* backendEnv = std::getenv("VKGS_HEADLESS_BACKEND");
+        std::string headlessBackend = backendEnv == nullptr ? "auto" : backendEnv;
+        if (headlessBackend != "auto" && headlessBackend != "glfw" && headlessBackend != "surface") {
+            throw std::runtime_error("VKGS_HEADLESS_BACKEND must be auto, glfw, or surface");
+        }
+        bool hasWindowSystem = std::getenv("DISPLAY") != nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr;
+        if (headlessBackend == "surface" && !hasVulkanInstanceExtension(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME)) {
+            throw std::runtime_error("VKGS_HEADLESS_BACKEND=surface requested, but VK_EXT_headless_surface is not exposed by this Vulkan runtime");
+        }
+        if (headlessBackend != "surface" && !hasWindowSystem) {
+            throw std::runtime_error("Headless mode needs a presentable WSI surface. No DISPLAY/WAYLAND_DISPLAY is available for the default hidden-GLFW backend. Run the container with X11/Wayland or an NVIDIA Xorg dummy display, or set VKGS_HEADLESS_BACKEND=surface only on a Vulkan runtime that exposes VK_EXT_headless_surface.");
+        }
+        bool useHiddenGlfw = headlessBackend != "surface";
+        if (useHiddenGlfw) {
+            spdlog::info("Using hidden GLFW surface for headless mode");
+            config.window = VulkanSplatting::createGlfwWindow("Vulkan Splatting", width, height, false);
+        } else {
+            spdlog::info("Using VK_EXT_headless_surface for headless mode");
+            config.window = VulkanSplatting::createHeadlessWindow(width, height);
+        }
+    } else
 #endif
+    {
+        config.window = VulkanSplatting::createGlfwWindow("Vulkan Splatting", width, height);
+    }
     auto renderer = VulkanSplatting(config);
     renderer.start();
-#ifndef DEBUG
     } catch (const std::exception& e) {
         spdlog::critical(e.what());
         std::cout << e.what() << std::endl;
-        return 0;
+        return 1;
     }
-#endif
     return 0;
 }

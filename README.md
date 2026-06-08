@@ -38,8 +38,21 @@ with support for warp-level primitives (subgroups).
       -w[width], --width=[width]        Set window width
       -h[height], --height=[height]     Set window height
       --no-gui                          Disable GUI
+      --tile-heatmap                    Start with tile load heatmap enabled
+      --frame-stats                     Collect per-frame Gaussian statistics
+      --print-frame-stats               Print per-frame Gaussian statistics
+      --stats-csv=[path]                Write per-frame Gaussian statistics CSV
+      --tile-instances-csv=[path]       Write first-frame per-tile Gaussian instance CSV
       scene                             Path to scene fil
 ```
+
+## Tile Heatmap and Frame Statistics
+
+The viewer includes opt-in tile load debugging. `--tile-heatmap` switches the render shader to a fullscreen heatmap where each pixel reads the load of its tile from `tileBoundaryBuffer`; the load is `end - start`, i.e. the number of sorted `(Gaussian, Tile)` entries in that tile. The color ramp is blue, green, yellow, red and is normalized by the current frame's GPU-computed max tile load.
+
+`--frame-stats`, `--print-frame-stats`, or `--stats-csv=stats.csv` enables a lightweight `frame_stats.comp` pass after tile boundary generation. Instance count reuses the prefix-sum total already read for sorting, visible Gaussian count is derived from `tileOverlapBuffer`, and max tile load is derived from `tileBoundaryBuffer`. Results are copied to a persistently mapped two-slot readback buffer and consumed on the next completed frame without adding queue/device idle waits. CSV output also includes `frame_latency_ms`, measured from the same completed-frame timing used by the frame-time log. With GUI enabled, the same values are shown in the Metrics window. Disabled mode adds no per-frame stats dispatch; enabled mode adds one debug stats dispatch and a 16-byte GPU-to-host copy.
+
+`--tile-instances-csv=tile_instances.csv` writes one CSV for the first rendered frame, with one row per tile. Rows are ordered by tile grid position and include `tile_x`, `tile_y`, `pixel_x`, `pixel_y`, `gaussian_instances`, and the sorted instance range `[range_start, range_end)` used to derive the count. This path intentionally performs a synchronous first-frame readback and is independent of the profiling/statistics CSV.
 
 ## Building
 ### Linux

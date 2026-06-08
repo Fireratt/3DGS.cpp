@@ -3515,8 +3515,6 @@ static inline const char* string_VkDriverId(VkDriverId input_value) {
             return "VK_DRIVER_ID_MESA_NVK";
         case VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA:
             return "VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA";
-        case VK_DRIVER_ID_MESA_HONEYKRISP:
-            return "VK_DRIVER_ID_MESA_HONEYKRISP";
         default:
             return "Unhandled VkDriverId";
     }

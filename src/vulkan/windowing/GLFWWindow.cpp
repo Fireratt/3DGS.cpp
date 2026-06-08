@@ -3,13 +3,21 @@
 #include <GLFW/glfw3.h>
 #include <glm/ext/matrix_transform.hpp>
 
-GLFWWindow::GLFWWindow(std::string name, int width, int height) {
-    glfwInit();
+GLFWWindow::GLFWWindow(std::string name, int width, int height, bool visible) {
+    if (!glfwInit()) {
+        throw std::runtime_error("failed to initialize GLFW");
+    }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    if (!visible) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
 
     window = glfwCreateWindow(width, height, name.c_str(), nullptr, nullptr);
+    if (window == nullptr) {
+        throw std::runtime_error("failed to create GLFW window");
+    }
 }
 
 VkSurfaceKHR GLFWWindow::createSurface(std::shared_ptr<VulkanContext> context) {

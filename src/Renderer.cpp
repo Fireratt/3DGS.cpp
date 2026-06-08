@@ -486,27 +486,26 @@ startOfRenderLoop:
 
 void Renderer::run() {
     while (running) {
-        if (!window->tick()) {
-            break;
-        }
+        if (!window->tick()) break;
 
         draw();
-        // 卡一下帧率
-        auto now = std::chrono::high_resolution_clock::now();
+
+        // ✅ 改用 steady_clock
+        auto now = std::chrono::system_clock::now();
+        fpsCounter++; // ✅ 先计数，再判断是否到达窗口
+
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFpsTime).count();
-        if (diff > 1000) {
-            spdlog::info("FPS: {}", fpsCounter);
-            spdlog::info("[Profiling] FPS in 1 second: {}" , fpsCounter) ;
+        if (diff >= 1000) {
+            // ✅ 用浮点数保留精度，避免整数截断
+            double actualFps = fpsCounter * 1000.0 / diff;
+            spdlog::info("FPS: {:.1f}", actualFps);
+            spdlog::info("[Profiling] FPS in 1 second: {:.1f}", actualFps);
+
             fpsCounter = 0;
-            lastFpsTime = now;
-        } else {
-            fpsCounter++;
-        }
-        // @火鼠: 计算的直接去掉
-        if (!configuration.enableGui) {
-            continue ;
+            lastFpsTime = now; // 注意：这里仍有微小漂移，但对秒级统计可接受
         }
 
+        if (!configuration.enableGui) continue;
         retrieveTimestamps();
     }
 

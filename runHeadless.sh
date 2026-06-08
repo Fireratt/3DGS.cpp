@@ -1,0 +1,2 @@
+VKGS_HEADLESS=1 ./build/apps/viewer/3dgs_viewer --immediate-swapchain --headless --no-gui --width=2560 --height=1440 ../res/gaussian_splatting/FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply
+# VKGS_HEADLESS_BACKEND=surface VKGS_HEADLESS=1 ./build/apps/viewer/3dgs_viewer --immediate-swapchain --headless --no-gui --width=2560 --height=1440 ../res/gaussian_splatting/FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply

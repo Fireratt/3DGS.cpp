@@ -21,13 +21,22 @@ public:
         float far = 1000.0f;
         bool enableGui = true;
         bool enableTrajectory = true ;  // 是否启用轨迹
+        bool showTileHeatmap = false;
+        bool enableFrameStats = false;
+        bool printFrameStats = false;
+        std::string statsCsvPath;
+        std::string tileInstancesCsvPath;
         std::shared_ptr<Window> window;
     };
 
     explicit VulkanSplatting(RendererConfiguration configuration) : configuration(configuration) {}
 
 #ifdef VKGS_ENABLE_GLFW
-    static std::shared_ptr<Window> createGlfwWindow(std::string name, int width, int height);
+    static std::shared_ptr<Window> createGlfwWindow(std::string name, int width, int height, bool visible = true);
+#endif
+
+#ifdef VKGS_ENABLE_HEADLESS
+    static std::shared_ptr<Window> createHeadlessWindow(int width, int height);
 #endif
 
 #ifdef VKGS_ENABLE_METAL

@@ -16,7 +16,8 @@ file(GLOB SOURCE
         *.cpp
         vulkan/*.cpp
         vulkan/pipelines/*.cpp
-        vulkan/windowing/GLFWWindow.cpp)
+        vulkan/windowing/GLFWWindow.cpp
+        vulkan/windowing/HeadlessWindow.cpp)
 
 # Remove DummyGUIManager.cpp from source list
 list(REMOVE_ITEM SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/DummyGUIManager.cpp)
