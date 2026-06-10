@@ -1,18 +1,28 @@
 #include "Swapchain.h"
 
 #include "glm/glm.hpp"
+#include <atomic>
 #include <fstream>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include "spdlog/spdlog.h"
 #include <vk_enum_string_helper.h>
 
 Swapchain::Swapchain(const std::shared_ptr<VulkanContext>& context, const std::shared_ptr<Window>& window,
-                     bool immediate) : context(context), window(window), immediate(immediate) {
-    auto createSwapchainImages = [&](){this->createOffscreenImages() ; } ; 
-
+                     bool immediate, bool offscreen)
+        : context(context), window(window), immediate(immediate), offscreen(offscreen) {
     createSwapchain();
-    createStagingBuffers() ;
-    createSwapchainImages();
+    if (offscreen) {
+        createOffscreenImages();
+        createStagingBuffers();
+    } else {
+        createSwapchainImages();
+    }
+}
+
+Swapchain::~Swapchain() {
+    destroyStagingBuffers();
 }
 
 void Swapchain::createSwapchain() {
@@ -134,7 +144,7 @@ void Swapchain::createOffscreenImages() {
     vk::Format format = swapchainFormat;
     vk::Extent2D extent = swapchainExtent;
 
-    uint32_t imageCount = 3; // 保持和原 swapchain 类似的 buffering 数量
+    imageCount = 3; // 保持和原 swapchain 类似的 buffering 数量
 
     for (uint32_t i = 0; i < imageCount; i++) {
 
@@ -195,7 +205,7 @@ void Swapchain::createOffscreenImages() {
     }
 }
 void Swapchain::createStagingBuffers() {
-    uint32_t imageCount = 3; // 保持和原 swapchain 类似的 buffering 数量
+    imageCount = 3; // 保持和原 swapchain 类似的 buffering 数量
     vk::Extent2D extent = swapchainExtent;
     VkDeviceSize width = extent.width ; 
     VkDeviceSize height = extent.height ; 
@@ -234,16 +244,30 @@ void Swapchain::createStagingBuffers() {
         stagingBuffers[i].mapped = allocDetail.pMappedData;
     }
 }
+void Swapchain::destroyStagingBuffers() {
+    for (auto& stagingBuffer: stagingBuffers) {
+        if (stagingBuffer.allocation != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(context->allocator, static_cast<VkBuffer>(stagingBuffer.buffer), stagingBuffer.allocation);
+            stagingBuffer.allocation = VK_NULL_HANDLE;
+            stagingBuffer.mapped = nullptr;
+        }
+    }
+    stagingBuffers.clear();
+}
 void Swapchain::recreate() {
-    auto createSwapchainImages = [&](){this->createOffscreenImages() ; } ; 
-
-
     context->device->waitIdle();
     swapchain.reset();
     swapchainImages.clear();
+    imageAvailableSemaphores.clear();
+    destroyStagingBuffers();
 
     createSwapchain();
-    createSwapchainImages();
+    if (offscreen) {
+        createOffscreenImages();
+        createStagingBuffers();
+    } else {
+        createSwapchainImages();
+    }
     spdlog::debug("Swapchain recreated");
 }
 // 简单写 PPM（无依赖，RGB）

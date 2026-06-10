@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     args::Flag printFrameStatsFlag{parser, "print-frame-stats", "Print per-frame Gaussian statistics", {"print-frame-stats"}};
     args::ValueFlag<std::string> statsCsvFlag{parser, "stats-csv", "Write per-frame Gaussian statistics CSV", {"stats-csv"}};
     args::ValueFlag<std::string> tileInstancesCsvFlag{parser, "tile-instances-csv", "Write first-frame per-tile Gaussian instance CSV", {"tile-instances-csv"}};
+    args::Flag offscreenFlag{parser, "offscreen", "Enable offscreen rendering and dump frames to ./tmp", {"offscreen"}};
     args::Positional<std::string> scenePath{parser, "scene", "Path to scene file", "scene.ply"};
     args::Positional<std::string> cameraPath{parser, "trajectory", "Path to trajectory", ""};
 
@@ -86,6 +87,7 @@ int main(int argc, char** argv) {
 #ifdef VKGS_ENABLE_HEADLESS
     auto headless = pre.register_variable<bool>("HEADLESS");
 #endif
+    auto offscreen = pre.register_variable<bool>("OFFSCREEN");
     auto envVars = pre.parse_and_validate();
 
     if (args::get(verboseFlag)) {
@@ -110,6 +112,7 @@ int main(int argc, char** argv) {
         args::get(scenePath),
         args::get(cameraPath)
     };
+    config.enableOffscreen = envVars.get_or(offscreen, false);
 
     // check that the scene file exists
     if (!std::filesystem::exists(config.scene)) {
@@ -134,9 +137,13 @@ int main(int argc, char** argv) {
     }
 
     if (enableHeadless || noGuiFlag) {
+    if (offscreenFlag) {
+        config.enableOffscreen = args::get(offscreenFlag);
+    }
+
+    config.enableGui = !args::get(noGuiFlag);
+    if (config.enableOffscreen) {
         config.enableGui = false;
-    } else {
-        config.enableGui = true;
     }
 
     config.showTileHeatmap = args::get(tileHeatmapFlag);

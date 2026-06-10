@@ -26,6 +26,7 @@ public:
         bool printFrameStats = false;
         std::string statsCsvPath;
         std::string tileInstancesCsvPath;
+        bool enableOffscreen = false;
         std::shared_ptr<Window> window;
     };
 

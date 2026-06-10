@@ -8,15 +8,17 @@
 
 class Swapchain {
 public:
-    Swapchain(const std::shared_ptr<VulkanContext> &context, const std::shared_ptr<Window> &window, bool immediate);
+    Swapchain(const std::shared_ptr<VulkanContext> &context, const std::shared_ptr<Window> &window, bool immediate, bool offscreen);
+
+    ~Swapchain();
 
     vk::UniqueSwapchainKHR swapchain;
     vk::Extent2D swapchainExtent;
     std::vector<std::shared_ptr<Image>> swapchainImages;
     struct StagingBuffer {
         vk::Buffer buffer;
-        VmaAllocation allocation;
-        void* mapped;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        void* mapped = nullptr;
     };
 
     std::vector<StagingBuffer> stagingBuffers;
@@ -36,6 +38,7 @@ private:
     std::shared_ptr<Window> window;
 
     bool immediate = false;
+    bool offscreen = false;
 
     void createSwapchain();
 
@@ -44,6 +47,8 @@ private:
     void createOffscreenImages() ; 
 
     void createStagingBuffers() ; 
+
+    void destroyStagingBuffers();
 
     static void writePPM(const std::string& path, uint8_t* data, uint32_t width, uint32_t height, bool bgra);
 };

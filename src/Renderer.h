@@ -132,7 +132,7 @@ private:
     vk::UniqueCommandBuffer preprocessCommandBuffer;
     vk::UniqueCommandBuffer renderCommandBuffer;
 
-    uint32_t currentImageIndex;
+    uint32_t currentImageIndex = 0;
     std::chrono::high_resolution_clock::time_point lastFrameTime;
     bool firstFrame = true;  // 避免第一帧输出无效数据
     std::vector<vk::UniqueSemaphore> renderFinishedSemaphores;

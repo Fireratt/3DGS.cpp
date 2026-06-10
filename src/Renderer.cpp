@@ -161,7 +161,8 @@ void Renderer::initializeVulkan() {
     context->createLogicalDevice(pdf, pdf11, pdf12);
     context->createDescriptorPool(1);
 
-    swapchain = std::make_shared<Swapchain>(context, window, configuration.immediateSwapchain);
+    swapchain = std::make_shared<Swapchain>(context, window, configuration.immediateSwapchain,
+                                            configuration.enableOffscreen);
 
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
         inflightFences.emplace_back(
@@ -404,9 +405,23 @@ void Renderer::draw() {
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
     }
-    swapchain->DumpImage("./tmp" ,currentImageIndex);
+    if (configuration.enableOffscreen) {
+        currentImageIndex = 0;
+    } else {
+        auto res = context->device->acquireNextImageKHR(swapchain->swapchain.get(), UINT64_MAX,
+                                                        swapchain->imageAvailableSemaphores[0].get(),
+                                                        nullptr, &currentImageIndex);
+        if (res == vk::Result::eErrorOutOfDateKHR) {
+            recreateSwapchain();
+            return;
+        } else if (res != vk::Result::eSuccess && res != vk::Result::eSuboptimalKHR) {
+            throw std::runtime_error("Failed to acquire swapchain image");
+        }
+    }
+
     context->device->resetFences(inflightFences[0].get());
 
+<<<<<<< HEAD
     // ====== 新增：帧时间测量 ======
     auto currentTime = std::chrono::high_resolution_clock::now();
     if (!firstFrame) {
@@ -433,11 +448,13 @@ void Renderer::draw() {
         throw std::runtime_error("Failed to acquire swapchain image");
     }
 
+=======
+>>>>>>> offscreen
 startOfRenderLoop:
     // 使用轨迹时，不接受外部输入
     if(this->configuration.enableTrajectory){
         this->camera = this->cameraTrajectories[this->trajectoryIndex++] ;
-        this->trajectoryIndex = this->trajectoryIndex % this->cameraTrajectories.size() ; 
+        this->trajectoryIndex = this->trajectoryIndex % this->cameraTrajectories.size() ;
     }else{
         handleInput();
     }
@@ -456,32 +473,48 @@ startOfRenderLoop:
     if (!recordRenderCommandBuffer(0)) {
         goto startOfRenderLoop;
     }
+
+    if (configuration.enableOffscreen) {
+        submitInfo = vk::SubmitInfo{}
+                .setWaitSemaphoreCount(0)
+                .setCommandBuffers(renderCommandBuffer.get());
+        context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
+
+        ret = context->device->waitForFences(inflightFences[0].get(), VK_TRUE, UINT64_MAX);
+        if (ret != vk::Result::eSuccess) {
+            throw std::runtime_error("Failed to wait for fence");
+        }
+        swapchain->DumpImage("./tmp", currentImageIndex);
+        return;
+    }
+
     vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eComputeShader;
     // 提交渲染
-    submitInfo = vk::SubmitInfo{}
-            .setWaitSemaphoreCount(0)
-            .setCommandBuffers(renderCommandBuffer.get()) ;
+    submitInfo = vk::SubmitInfo{}.setWaitSemaphores(swapchain->imageAvailableSemaphores[0].get())
+            .setCommandBuffers(renderCommandBuffer.get())
+            .setSignalSemaphores(renderFinishedSemaphores[0].get())
+            .setWaitDstStageMask(waitStage);
     context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
 
-    // vk::PresentInfoKHR presentInfo{};
-    // presentInfo.waitSemaphoreCount = 1;
-    // presentInfo.pWaitSemaphores = &renderFinishedSemaphores[0].get();
-    // presentInfo.swapchainCount = 1;
-    // presentInfo.pSwapchains = &swapchain->swapchain.get();
-    // presentInfo.pImageIndices = &currentImageIndex;
+    vk::PresentInfoKHR presentInfo{};
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[0].get();
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &swapchain->swapchain.get();
+    presentInfo.pImageIndices = &currentImageIndex;
 
-    // try {
-    //     ret = context->queues[VulkanContext::Queue::PRESENT].queue.presentKHR(presentInfo);
-    // } catch (vk::OutOfDateKHRError& e) {
-    //     recreateSwapchain();
-    //     return;
-    // }
+    try {
+        ret = context->queues[VulkanContext::Queue::PRESENT].queue.presentKHR(presentInfo);
+    } catch (vk::OutOfDateKHRError& e) {
+        recreateSwapchain();
+        return;
+    }
 
-    // if (ret == vk::Result::eErrorOutOfDateKHR || ret == vk::Result::eSuboptimalKHR) {
-    //     recreateSwapchain();
-    // } else if (ret != vk::Result::eSuccess) {
-    //     throw std::runtime_error("Failed to present swapchain image");
-    // }
+    if (ret == vk::Result::eErrorOutOfDateKHR || ret == vk::Result::eSuboptimalKHR) {
+        recreateSwapchain();
+    } else if (ret != vk::Result::eSuccess) {
+        throw std::runtime_error("Failed to present swapchain image");
+    }
 }
 
 void Renderer::run() {
@@ -758,13 +791,13 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
-    if (configuration.enableGui) {
+    if (configuration.enableGui && !configuration.enableOffscreen) {
         imageMemoryBarrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
         imageMemoryBarrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
         renderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
                                              vk::PipelineStageFlagBits::eColorAttachmentOutput,
                                              vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
-    } else {
+    } else if (configuration.enableOffscreen) {
         imageMemoryBarrier.oldLayout = vk::ImageLayout::eGeneral;
         imageMemoryBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
         imageMemoryBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
@@ -775,7 +808,7 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
             vk::PipelineStageFlagBits::eTransfer,
             vk::DependencyFlagBits::eByRegion,
             nullptr, nullptr, imageMemoryBarrier
-        );    
+        );
         vk::BufferImageCopy region{};
         region.bufferOffset = 0;
         region.bufferRowLength = 0;      // tightly packed
@@ -785,8 +818,8 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
         region.imageSubresource.mipLevel = 0;
         region.imageSubresource.baseArrayLayer = 0;
         region.imageSubresource.layerCount = 1;
-        vk::Offset3D offset(0); 
-        vk::Extent3D imageExtent(width , height , 1) ;
+        vk::Offset3D offset(0);
+        vk::Extent3D imageExtent(width, height, 1);
         region.imageOffset = offset;
         region.imageExtent = imageExtent;
 
@@ -796,11 +829,17 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
             swapchain->stagingBuffers[currentImageIndex].buffer,
             region
         );
+    } else {
+        imageMemoryBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
+        imageMemoryBarrier.dstAccessMask = vk::AccessFlagBits::eMemoryRead;
+        renderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                                             vk::PipelineStageFlagBits::eBottomOfPipe,
+                                             vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
     }
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("render_end"));
 
-    if (configuration.enableGui) {
+    if (configuration.enableGui && !configuration.enableOffscreen) {
         imguiManager->draw(renderCommandBuffer.get(), currentImageIndex, std::bind(&GUIManager::buildGui, &guiManager));
 
         imageMemoryBarrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
