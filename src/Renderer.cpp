@@ -421,7 +421,6 @@ void Renderer::draw() {
 
     context->device->resetFences(inflightFences[0].get());
 
-<<<<<<< HEAD
     // ====== 新增：帧时间测量 ======
     auto currentTime = std::chrono::high_resolution_clock::now();
     if (!firstFrame) {
@@ -448,8 +447,6 @@ void Renderer::draw() {
         throw std::runtime_error("Failed to acquire swapchain image");
     }
 
-=======
->>>>>>> offscreen
 startOfRenderLoop:
     // 使用轨迹时，不接受外部输入
     if(this->configuration.enableTrajectory){
