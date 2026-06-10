@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
     args::ValueFlag<uint32_t> widthFlag{parser, "width", "Set window width", {'w', "width"}};
     args::ValueFlag<uint32_t> heightFlag{parser, "height", "Set window height", {'h', "height"}};
     args::Flag noGuiFlag{parser, "no-gui", "Disable GUI", { "no-gui"}};
+    args::Flag offscreenFlag{parser, "offscreen", "Enable offscreen rendering and dump frames to ./tmp", {"offscreen"}};
     args::Positional<std::string> scenePath{parser, "scene", "Path to scene file", "scene.ply"};
     args::Positional<std::string> cameraPath{parser, "trajectory", "Path to trajectory", ""};
 
@@ -48,6 +49,7 @@ int main(int argc, char** argv) {
     auto validationLayers = pre.register_variable<bool>("VALIDATION_LAYERS");
     auto physicalDeviceId = pre.register_variable<uint8_t>("PHYSICAL_DEVICE");
     auto immediateSwapchain = pre.register_variable<bool>("IMMEDIATE_SWAPCHAIN");
+    auto offscreen = pre.register_variable<bool>("OFFSCREEN");
     auto envVars = pre.parse_and_validate();
 
     if (args::get(verboseFlag)) {
@@ -63,6 +65,7 @@ int main(int argc, char** argv) {
         args::get(scenePath),
         args::get(cameraPath)
     };
+    config.enableOffscreen = envVars.get_or(offscreen, false);
 
     // check that the scene file exists
     if (!std::filesystem::exists(config.scene)) {
@@ -86,10 +89,13 @@ int main(int argc, char** argv) {
         config.immediateSwapchain = args::get(immediateSwapchainFlag);
     }
 
-    if (noGuiFlag) {
+    if (offscreenFlag) {
+        config.enableOffscreen = args::get(offscreenFlag);
+    }
+
+    config.enableGui = !args::get(noGuiFlag);
+    if (config.enableOffscreen) {
         config.enableGui = false;
-    } else {
-        config.enableGui = true;
     }
 
     auto width = widthFlag ? args::get(widthFlag) : 1280;

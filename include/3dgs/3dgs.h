@@ -21,6 +21,7 @@ public:
         float far = 1000.0f;
         bool enableGui = true;
         bool enableTrajectory = true ;  // 是否启用轨迹
+        bool enableOffscreen = false;
         std::shared_ptr<Window> window;
     };
 
