@@ -404,6 +404,7 @@ void Renderer::draw() {
     if (ret != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to wait for fence");
     }
+    swapchain->DumpImage("./tmp" ,currentImageIndex);
     context->device->resetFences(inflightFences[0].get());
 
     // ====== 新增：帧时间测量 ======
@@ -457,31 +458,30 @@ startOfRenderLoop:
     }
     vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eComputeShader;
     // 提交渲染
-    submitInfo = vk::SubmitInfo{}.setWaitSemaphores(swapchain->imageAvailableSemaphores[0].get())
-            .setCommandBuffers(renderCommandBuffer.get())
-            .setSignalSemaphores(renderFinishedSemaphores[0].get())
-            .setWaitDstStageMask(waitStage);
+    submitInfo = vk::SubmitInfo{}
+            .setWaitSemaphoreCount(0)
+            .setCommandBuffers(renderCommandBuffer.get()) ;
     context->queues[VulkanContext::Queue::COMPUTE].queue.submit(submitInfo, inflightFences[0].get());
 
-    vk::PresentInfoKHR presentInfo{};
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[0].get();
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &swapchain->swapchain.get();
-    presentInfo.pImageIndices = &currentImageIndex;
+    // vk::PresentInfoKHR presentInfo{};
+    // presentInfo.waitSemaphoreCount = 1;
+    // presentInfo.pWaitSemaphores = &renderFinishedSemaphores[0].get();
+    // presentInfo.swapchainCount = 1;
+    // presentInfo.pSwapchains = &swapchain->swapchain.get();
+    // presentInfo.pImageIndices = &currentImageIndex;
 
-    try {
-        ret = context->queues[VulkanContext::Queue::PRESENT].queue.presentKHR(presentInfo);
-    } catch (vk::OutOfDateKHRError& e) {
-        recreateSwapchain();
-        return;
-    }
+    // try {
+    //     ret = context->queues[VulkanContext::Queue::PRESENT].queue.presentKHR(presentInfo);
+    // } catch (vk::OutOfDateKHRError& e) {
+    //     recreateSwapchain();
+    //     return;
+    // }
 
-    if (ret == vk::Result::eErrorOutOfDateKHR || ret == vk::Result::eSuboptimalKHR) {
-        recreateSwapchain();
-    } else if (ret != vk::Result::eSuccess) {
-        throw std::runtime_error("Failed to present swapchain image");
-    }
+    // if (ret == vk::Result::eErrorOutOfDateKHR || ret == vk::Result::eSuboptimalKHR) {
+    //     recreateSwapchain();
+    // } else if (ret != vk::Result::eSuccess) {
+    //     throw std::runtime_error("Failed to present swapchain image");
+    // }
 }
 
 void Renderer::run() {
@@ -765,11 +765,37 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
                                              vk::PipelineStageFlagBits::eColorAttachmentOutput,
                                              vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
     } else {
-        imageMemoryBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
-        imageMemoryBarrier.dstAccessMask = vk::AccessFlagBits::eMemoryRead;
-        renderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
-                                             vk::PipelineStageFlagBits::eBottomOfPipe,
-                                             vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
+        imageMemoryBarrier.oldLayout = vk::ImageLayout::eGeneral;
+        imageMemoryBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+        imageMemoryBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        imageMemoryBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+        renderCommandBuffer->pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::DependencyFlagBits::eByRegion,
+            nullptr, nullptr, imageMemoryBarrier
+        );    
+        vk::BufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;      // tightly packed
+        region.bufferImageHeight = 0;
+
+        region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        vk::Offset3D offset(0); 
+        vk::Extent3D imageExtent(width , height , 1) ;
+        region.imageOffset = offset;
+        region.imageExtent = imageExtent;
+
+        renderCommandBuffer->copyImageToBuffer(
+            swapchain->swapchainImages[currentImageIndex]->image,
+            vk::ImageLayout::eTransferSrcOptimal,
+            swapchain->stagingBuffers[currentImageIndex].buffer,
+            region
+        );
     }
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("render_end"));
