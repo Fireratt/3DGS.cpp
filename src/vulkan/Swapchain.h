@@ -13,6 +13,13 @@ public:
     vk::UniqueSwapchainKHR swapchain;
     vk::Extent2D swapchainExtent;
     std::vector<std::shared_ptr<Image>> swapchainImages;
+    struct StagingBuffer {
+        vk::Buffer buffer;
+        VmaAllocation allocation;
+        void* mapped;
+    };
+
+    std::vector<StagingBuffer> stagingBuffers;
     std::vector<vk::UniqueSemaphore> imageAvailableSemaphores;
     vk::SurfaceFormatKHR surfaceFormat;
     vk::Format swapchainFormat;
@@ -20,6 +27,10 @@ public:
     uint32_t imageCount;
 
     void recreate();
+
+    void DumpImage(const char* targetDirectory, int imageIndex,
+            bool isBGRA = true);
+
 private:
     std::shared_ptr<VulkanContext> context;
     std::shared_ptr<Window> window;
@@ -29,6 +40,12 @@ private:
     void createSwapchain();
 
     void createSwapchainImages();
+
+    void createOffscreenImages() ; 
+
+    void createStagingBuffers() ; 
+
+    static void writePPM(const std::string& path, uint8_t* data, uint32_t width, uint32_t height, bool bgra);
 };
 
 
