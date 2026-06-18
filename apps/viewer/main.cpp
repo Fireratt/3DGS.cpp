@@ -136,7 +136,6 @@ int main(int argc, char** argv) {
         config.immediateSwapchain = args::get(immediateSwapchainFlag);
     }
 
-    if (enableHeadless || noGuiFlag) {
     if (offscreenFlag) {
         config.enableOffscreen = args::get(offscreenFlag);
     }
